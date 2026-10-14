@@ -130,6 +130,7 @@ label > input, label > select, label > .input-with-btn { color: var(--ink); font
   width: 38px; height: 38px; border-radius: 12px; flex: none; display: inline-grid; place-items: center;
 }
 .icon.danger, .link.danger { color: var(--danger); }
+.icon.ibig { width: 43.98px; height: 43.98px; font-size: 1rem; }
 .link { font: inherit; background: none; border: 0; color: var(--primary); cursor: pointer; padding: .2rem 0; text-align: left; }
 
 .card {
@@ -150,7 +151,7 @@ label > input, label > select, label > .input-with-btn { color: var(--ink); font
 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--c, var(--muted)); display: inline-block; margin-right: .3rem; flex: none; }
 .section-h { font-size: 1.05rem; margin: .4rem 0 .6rem; }
 .sub-h { font-family: var(--font-display); font-size: .95rem; font-weight: 700; margin: 1rem 0 .5rem; color: var(--ink); display: block; }
-.section-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+.section-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; margin: 0 0 0.45rem; }
 .section-head h2 { margin: 0; }
 .hint { background: var(--surface-2); border-radius: var(--r-sm); padding: .55rem .75rem; font-size: .85rem; }
 .empty { color: var(--muted); text-align: center; padding: 1.4rem; }
@@ -643,3 +644,77 @@ label.check small { color: var(--muted); font-weight: 400; font-size: .8rem; lin
   border: 0; border-radius: 10px; background: transparent; color: var(--muted); cursor: pointer; display: grid; place-items: center;
 }
 .pw-eye:hover, .pw-eye[aria-pressed="true"] { color: var(--primary); background: var(--surface-2); }
+
+/* ---------- v8: alternativas e cenários ---------- */
+.opt-group {
+  border: 2px dashed color-mix(in srgb, var(--primary) 45%, transparent); border-radius: var(--r-lg);
+  padding: .7rem; margin-bottom: .75rem; display: flex; flex-direction: column; gap: .6rem;
+}
+.opt-group-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .6rem; padding: 0 .2rem; }
+.opt-item { display: flex; flex-direction: column; gap: .35rem; }
+.opt-item .res-item { margin-bottom: 0; }
+.opt-item:not(.is-active) > .res-item, .opt-item:not(.is-active) > .pass { opacity: .72; }
+.opt-item:not(.is-active):hover > .res-item { opacity: 1; }
+.opt-bar { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; padding: 0 .2rem; font-size: .88rem; }
+.opt-letter {
+  width: 24px; height: 24px; border-radius: 8px; display: grid; place-items: center; flex: none;
+  background: var(--surface-2); font: 700 .8rem/1 var(--font-display);
+}
+.opt-item.is-active .opt-letter { background: var(--primary); color: var(--primary-ink); }
+.opt-item.is-active .opt-bar b { color: var(--primary); }
+.alt-row { margin: -.35rem 0 .75rem .2rem; }
+.opt-group .alt-row { margin: 0 .2rem; }
+.alt-chips { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; padding-top: .4rem; border-top: 1px dashed var(--border); }
+.alt-chip { display: inline-flex; align-items: center; gap: .4rem; padding: .3rem .3rem .3rem .65rem; border-radius: 999px; background: var(--surface-2); font-size: .85rem; }
+.alt-chip .btn { padding: .3rem .6rem; }
+.scn-list { display: flex; flex-direction: column; gap: .5rem; }
+.scn { border: 1px solid var(--border); border-radius: var(--r-md); padding: .75rem .85rem; display: flex; flex-direction: column; gap: .4rem; }
+.scn-using { border: 2px solid var(--primary); background: var(--primary-soft); }
+.scn-head { display: flex; align-items: center; gap: .5rem; }
+.scn-head .tag { margin-left: 0; }
+.scn-total { margin-left: auto; font: 700 1.1rem/1 var(--font-display); white-space: nowrap; }
+.scn-parts { display: flex; flex-wrap: wrap; gap: .25rem .8rem; font-size: .8rem; color: var(--muted); }
+.scn-foot { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+
+/* ---------- v8: celular, só o mapa ---------- */
+.map-only-btn, .map-mobile-btns, .map-show-bar { display: none; }
+@media (max-width: 899px) {
+  /* no celular o mapa aparece em todas as abas (dá para esconder) */
+  .mapwrap { display: block; height: 34vh; min-height: 220px; }
+  .tab-roteiro .mapwrap { height: 40vh; }
+  .map-hidden .mapwrap { display: none; }
+  .map-mobile-btns { display: flex; gap: .4rem; position: absolute; left: 10px; bottom: 26px; z-index: 500; }
+  .map-show-bar {
+    display: flex; align-items: center; justify-content: center; gap: .4rem; width: 100%;
+    font: 700 .85rem/1 var(--font-body); padding: .65rem; border-radius: var(--r-md); cursor: pointer;
+    border: 1px dashed var(--border); background: var(--surface); color: var(--primary);
+  }
+  .map-only .map-hide-btn { display: none; }
+  .map-only-btn {
+    display: inline-flex; align-items: center; gap: .35rem;
+    font: 700 .82rem/1 var(--font-body); padding: .6rem .85rem; border-radius: 999px; border: 0; cursor: pointer;
+    background: var(--ocean); color: var(--on-ocean); box-shadow: 0 8px 22px -8px rgba(0, 0, 0, .5);
+  }
+  .map-status { top: 58px; bottom: auto; }
+  .map-only .panel { display: none; }
+  .map-only .mapwrap { display: block; height: calc(100dvh - var(--topbar) - 86px - env(safe-area-inset-bottom)); }
+}
+
+/* ---------- v9: pacotes de reservas ---------- */
+.packages { display: flex; flex-direction: column; gap: .5rem; }
+.pkg-list { display: flex; flex-direction: column; gap: .45rem; }
+.pkg { display: flex; align-items: center; gap: .4rem; border: 2px solid var(--border); border-radius: var(--r-md); padding: .25rem .4rem .25rem .25rem; }
+.pkg.on { border-color: var(--primary); background: var(--primary-soft); }
+.pkg-main {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: .65rem; padding: .5rem .5rem; border: 0; background: transparent;
+  font: inherit; color: inherit; text-align: left; cursor: pointer; border-radius: var(--r-sm);
+}
+.pkg.on .pkg-main { cursor: default; }
+.pkg-main .grow { display: flex; flex-direction: column; }
+.pkg-radio { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--muted); flex: none; position: relative; background: var(--surface); }
+.pkg.on .pkg-radio { border-color: var(--primary); }
+.pkg.on .pkg-radio::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: var(--primary); }
+.pkg-cost { display: flex; flex-direction: column; align-items: flex-end; white-space: nowrap; }
+.pkg-cost b { font-family: var(--font-display); }
+.pkg-actions { display: flex; gap: .25rem; }
+.pkg-editing { margin: .2rem 0 0; color: var(--primary); }

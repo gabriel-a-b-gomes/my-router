@@ -27,6 +27,25 @@ Cada voo aparece como um cartão de embarque. Em "Editar voo", informe:
 
 Com os dois aeroportos no mapa, o app calcula a **distância de avião** em linha reta e desenha o arco do voo. Ela fica separada dos km por terra e **nunca entra no carro**. No dia da chegada, a rota começa no aeroporto; no dia da volta, termina nele.
 
+### Pacotes de reservas e cenários
+**Pacotes (aba Reservas):** voos, hospedagens e carro ficam dentro de um **pacote**.
+- Em **＋ Novo pacote**, copie o pacote atual (e troque só o que muda) ou comece vazio. Dê um nome, como "Econômico" ou "Conforto".
+- Toque num pacote para torná-lo o **vigente**. Tudo troca de uma vez: o que existe em um pacote não aparece no outro.
+- Cada pacote mostra o total das reservas e a diferença em relação ao vigente. Use ✎ para renomear e ✕ para excluir.
+- Roteiro, refeições e gastos são os mesmos em todos os pacotes.
+
+**Alternativas de passeio (aba Roteiro):** no cartão do passeio, toque em **⇄ Alternativa** e busque outro lugar. As alternativas aparecem abaixo do passeio; toque em **Usar** para trocar. Só a escolhida entra no roteiro, nas rotas e nos custos.
+
+**Cenários (aba Resumo):** **＋ Salvar escolhas atuais** guarda o pacote vigente, os passeios escolhidos e os restaurantes escolhidos.
+- Os cenários aparecem lado a lado, com o total e a diferença para as escolhas atuais.
+- **Aplicar** volta tudo de uma vez.
+- Ao excluir um pacote, os cenários que dependiam dele também saem.
+
+### Celular: mapa em todas as abas
+- No celular, o mapa aparece no topo de todas as abas (Roteiro, Gastos, Reservas e Resumo).
+- **⤢ Só o mapa** esconde os cadastros e deixa o mapa em tela cheia; **☰ Mostrar cadastros** volta.
+- **▴ Esconder mapa** tira o mapa de todas as abas (útil para lançar gastos rápido); **🗺️ Mostrar mapa** traz de volta. A escolha fica salva no aparelho.
+
 ### Cancelar ou excluir uma viagem
 - **Na tela inicial:** toque em ⋯ no cartão da viagem.
 - **Dentro da viagem:** use a aba Reservas → **Gerenciar viagem**.

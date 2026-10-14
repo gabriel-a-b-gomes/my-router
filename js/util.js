@@ -53,6 +53,11 @@ export function localToday() {
 }
 
 // ---------- regras da viagem ----------
+// Alternativas: itens com o mesmo "group" são opções do mesmo voo/hotel/carro/passeio.
+// Só a opção vigente (active) entra nas regras; itens sem grupo valem sempre.
+export const isActive = (x) => !x.group || !!x.active;
+export const act = (arr) => (arr || []).filter(isActive);
+export const groupOf = (arr, item) => (item.group ? arr.filter((x) => x.group === item.group) : [item]);
 export function tripDays(trip) {
   if (!trip.startDate || !trip.endDate) return [];
   const n = Math.max(0, daysBetween(trip.startDate, trip.endDate)) + 1;
@@ -60,12 +65,12 @@ export function tripDays(trip) {
 }
 
 // Hospedagem onde a pessoa dormiu na noite anterior / dormirá nesta noite.
-export const morningStay = (trip, date) => trip.stays.find((s) => s.checkin && s.checkout && s.checkin < date && s.checkout >= date);
-export const nightStay = (trip, date) => trip.stays.find((s) => s.checkin && s.checkout && s.checkin <= date && s.checkout > date);
+export const morningStay = (trip, date) => act(trip.stays).find((s) => s.checkin && s.checkout && s.checkin < date && s.checkout >= date);
+export const nightStay = (trip, date) => act(trip.stays).find((s) => s.checkin && s.checkout && s.checkin <= date && s.checkout > date);
 
 // Carro alugado disponível neste dia (da retirada até a devolução, inclusive).
 export const carOn = (trip, date) =>
-  (trip.cars || []).find((c) => c.pickupAt && c.returnAt && c.pickupAt.slice(0, 10) <= date && c.returnAt.slice(0, 10) >= date);
+  act(trip.cars).find((c) => c.pickupAt && c.returnAt && c.pickupAt.slice(0, 10) <= date && c.returnAt.slice(0, 10) >= date);
 
 // Dias com carro usam rota de carro; os demais usam o modo escolhido na viagem.
 export const modeFor = (trip, i) => (carOn(trip, tripDays(trip)[i]) ? 'driving-car' : trip.mode || 'foot-walking');
@@ -83,7 +88,7 @@ export const FOOD_STYLES = {
 };
 // opção de restaurante ainda não escolhida: fica fora do roteiro e da rota
 export const isOption = (p) => p.category === 'comida' && !!p.meal && !p.chosen;
-export const mealOptions = (trip, i, meal) => trip.places.filter((p) => p.day === i && p.category === 'comida' && p.meal === meal);
+export const mealOptions = (trip, i, meal) => act(trip.places).filter((p) => p.day === i && p.category === 'comida' && p.meal === meal);
 // restaurantes: custo por pessoa × pessoas; demais lugares: custo total
 export const placeCost = (trip, p) => (p.category === 'comida' ? num(p.costPP) * Math.max(1, num(trip.travelers)) : num(p.cost));
 
@@ -99,7 +104,7 @@ export function mealPlan(trip, i, meal) {
   return { meal, opts, chosen, value, basis };
 }
 
-export const dayPlaces = (trip, i) => trip.places.filter((p) => p.day === i && !isOption(p)).sort((a, b) => a.order - b.order);
+export const dayPlaces = (trip, i) => act(trip.places).filter((p) => p.day === i && !isOption(p)).sort((a, b) => a.order - b.order);
 
 // Durações sugeridas para passeios (minutos)
 export const DURATIONS = [[30, '30 min'], [60, '1 h'], [90, '1h30'], [120, '2 h'], [180, '3 h'], [240, '4 h'], [300, '5 h'], [360, 'Meio dia (6 h)'], [480, 'Dia inteiro (8 h)']];
@@ -110,7 +115,7 @@ export const fmtDuration = (min) => {
 };
 
 export const flightsOn = (trip, date) =>
-  trip.flights.filter((f) => (f.depart || '').startsWith(date) || (f.arrive || '').startsWith(date));
+  act(trip.flights).filter((f) => (f.depart || '').startsWith(date) || (f.arrive || '').startsWith(date));
 
 export const hasPos = (o) => o && Number.isFinite(o.lat) && Number.isFinite(o.lng);
 
@@ -129,12 +134,12 @@ const pt = (o, prefix) => (o && Number.isFinite(o[`${prefix}Lat`]) && Number.isF
 // Pontos fixos do dia: de onde sai, onde termina, retirada/devolução do carro.
 export function dayAnchors(trip, date) {
   let start = null, end = null, pickup = null, ret = null;
-  for (const f of trip.flights) {
+  for (const f of act(trip.flights)) {
     const leg = flightLeg(trip, f);
     if (leg !== 'volta' && (f.arrive || '').startsWith(date) && pt(f, 'to')) start = { ...pt(f, 'to'), name: `Aeroporto ${f.to || ''}`.trim(), icon: '✈️' };
     if (leg !== 'ida' && (f.depart || '').startsWith(date) && pt(f, 'from')) end = { ...pt(f, 'from'), name: `Aeroporto ${f.from || ''}`.trim(), icon: '✈️' };
   }
-  for (const c of trip.cars || []) {
+  for (const c of act(trip.cars)) {
     if ((c.pickupAt || '').startsWith(date) && pt(c, 'pickup')) pickup = { ...pt(c, 'pickup'), name: `Retirada do carro${c.company ? ` (${c.company})` : ''}`, icon: '🔑' };
     if ((c.returnAt || '').startsWith(date) && pt(c, 'return')) ret = { ...pt(c, 'return'), name: `Devolução do carro${c.company ? ` (${c.company})` : ''}`, icon: '🔑' };
   }
@@ -163,12 +168,12 @@ const MODE_CAT = { 'foot-walking': 'foot', 'cycling-regular': 'bike', 'driving-c
 export function pickupAfterFlight(trip, c) {
   if (typeof c.pickupAfterFlight === 'boolean') return c.pickupAfterFlight;
   const d = (c.pickupAt || '').slice(0, 10);
-  return !!d && trip.flights.some((f) => flightLeg(trip, f) !== 'volta' && (f.arrive || '').startsWith(d));
+  return !!d && act(trip.flights).some((f) => flightLeg(trip, f) !== 'volta' && (f.arrive || '').startsWith(d));
 }
 export function returnBeforeFlight(trip, c) {
   if (typeof c.returnBeforeFlight === 'boolean') return c.returnBeforeFlight;
   const d = (c.returnAt || '').slice(0, 10);
-  return !!d && trip.flights.some((f) => flightLeg(trip, f) !== 'ida' && (f.depart || '').startsWith(d));
+  return !!d && act(trip.flights).some((f) => flightLeg(trip, f) !== 'ida' && (f.depart || '').startsWith(d));
 }
 
 const samePos = (a, b) => Math.abs(a.lat - b.lat) < 1e-5 && Math.abs(a.lng - b.lng) < 1e-5;
@@ -300,7 +305,7 @@ export function dayKm(st) {
 export function kmSummary(trip) {
   const byCat = { air: 0, rental: 0, transfer: 0, drive: 0, foot: 0, bike: 0 };
   let flightsMissing = 0;
-  for (const f of trip.flights) {
+  for (const f of act(trip.flights)) {
     const k = flightKm(f);
     if (k == null) flightsMissing++;
     else byCat.air += k;
@@ -396,15 +401,15 @@ export function tripSummary(trip) {
   const spentCat = (cat) => sumAmount(exp.filter((e) => e.cat === cat));
   const sumDays = (k) => days.reduce((s, d) => s + d[k], 0);
 
-  const cars = trip.cars || [];
+  const cars = act(trip.cars);
   const rental = cars.reduce((s, c) => s + carRental(c).total, 0);
   const kms = cars.map((c) => carKm(trip, c));
   // Combustível previsto: cada km entra uma vez só — rotas dos dias com carro + km fora do roteiro.
   const fuel = kms.reduce((s, k) => s + k.fuel, 0);
   const excess = kms.reduce((s, k) => s + k.excessCost, 0);
   const tolls = cars.reduce((s, c) => s + num(c.tolls), 0);
-  const flights = trip.flights.reduce((s, f) => s + num(f.price), 0);
-  const stays = trip.stays.reduce((s, x) => s + num(x.price), 0);
+  const flights = act(trip.flights).reduce((s, f) => s + num(f.price), 0);
+  const stays = act(trip.stays).reduce((s, x) => s + num(x.price), 0);
 
   // [chave, rótulo, previsto, gasto, grupo]
   const rows = [
@@ -430,7 +435,7 @@ export function tripSummary(trip) {
 export function newTrip(fields) {
   return {
     id: uid(), name: '', destination: '', startDate: '', endDate: '', travelers: 1, currency: 'BRL',
-    mode: 'foot-walking', center: null, flights: [], stays: [], cars: [], places: [], expenses: [],
+    mode: 'foot-walking', center: null, flights: [], stays: [], cars: [], places: [], expenses: [], scenarios: [],
     dayStats: {}, dailyFood: 0, dailyTransport: 0, shoppingBudget: 0, createdAt: new Date().toISOString(),
     ...fields,
   };
@@ -445,6 +450,23 @@ export function normalizeTrip(t) {
   t.stays ??= [];
   t.dayStats ??= {};
   t.cancelled ??= false;
+  t.scenarios ??= [];
+  ensurePackages(t);
+  const hadAlt = PKG_KEYS.some((k) => t[k].some((x) => x.group && !x.active));
+  if (hadAlt && t.packages.length === 1) {
+    const b = { id: uid(), name: 'Pacote B' };
+    for (const k of PKG_KEYS) {
+      const seen = new Set();
+      b[k] = [];
+      for (const x of t[k]) {
+        if (!x.group) { b[k].push(JSON.parse(JSON.stringify({ ...x, id: uid() }))); continue; }
+        if (!x.active && !seen.has(x.group)) { seen.add(x.group); b[k].push({ ...x, id: uid() }); }
+      }
+      t[k] = t[k].filter((x) => !x.group || x.active);
+    }
+    t.packages.push(b);
+  }
+  for (const k of PKG_KEYS) for (const x of t[k]) { delete x.group; delete x.active; }
   for (const f of t.flights) f.leg ??= '';
   t.almocoBudget ??= 0; // orçamento por pessoa quando não há restaurante escolhido
   t.jantarBudget ??= 0;
@@ -472,4 +494,72 @@ export function normalizeTrip(t) {
     c.protectionName ??= '';
   }
   return t;
+}
+
+// ---------- pacotes de reservas ----------
+// Cada pacote tem seus voos, hospedagens e carros. O vigente fica em trip.flights/stays/cars
+// (é o que as regras usam); os demais ficam guardados em trip.packages[i].
+export const PKG_KEYS = ['flights', 'stays', 'cars'];
+export function ensurePackages(t) {
+  if (!Array.isArray(t.packages) || !t.packages.length) {
+    t.packages = [{ id: uid(), name: 'Pacote A' }];
+    t.packageId = t.packages[0].id;
+  }
+  if (!t.packages.some((p) => p.id === t.packageId)) t.packageId = t.packages[0].id;
+  return t;
+}
+export const activePackage = (t) => ensurePackages(t).packages.find((p) => p.id === t.packageId);
+// Dados de um pacote (o vigente vem da viagem; os outros, do próprio pacote)
+export const packageData = (t, pkg) => Object.fromEntries(PKG_KEYS.map((k) => [k, pkg.id === t.packageId ? t[k] : pkg[k] || []]));
+export function switchPackage(t, id) {
+  ensurePackages(t);
+  if (id === t.packageId) return;
+  const cur = activePackage(t);
+  const target = t.packages.find((p) => p.id === id);
+  if (!target) return;
+  for (const k of PKG_KEYS) { cur[k] = t[k]; t[k] = target[k] || []; delete target[k]; }
+  t.packageId = id;
+}
+// Cópia profunda com ids novos (para "duplicar pacote")
+export function clonePackageData(data) {
+  const copy = JSON.parse(JSON.stringify(data));
+  for (const k of PKG_KEYS) for (const x of copy[k]) {
+    x.id = uid();
+    delete x.group; delete x.active;
+    if (x.addons) x.addons = x.addons.map((a) => ({ ...a, id: uid() }));
+  }
+  return copy;
+}
+// Total das reservas de um pacote (voos + hospedagem + aluguel)
+export function packageCost(t, pkg) {
+  const d = packageData(t, pkg);
+  return d.flights.reduce((s, f) => s + num(f.price), 0) + d.stays.reduce((s, x) => s + num(x.price), 0)
+    + d.cars.reduce((s, c) => s + carRental(c).total, 0);
+}
+
+// ---------- cenários ----------
+// Um cenário guarda qual opção é a vigente em cada grupo e quais restaurantes estão escolhidos.
+export function currentChoices(trip) {
+  const groups = {};
+  for (const x of trip.places || []) if (x.group && x.active) groups[x.group] = x.id;
+  const meals = (trip.places || []).filter((p) => p.category === 'comida' && p.meal && p.chosen).map((p) => p.id).sort();
+  return { packageId: ensurePackages(trip).packageId, groups, meals };
+}
+export function applyChoices(trip, choices) {
+  if (choices.packageId && trip.packages?.some((p) => p.id === choices.packageId)) switchPackage(trip, choices.packageId);
+  for (const x of trip.places || []) {
+    if (x.group && choices.groups?.[x.group]) x.active = x.id === choices.groups[x.group];
+  }
+  if (Array.isArray(choices.meals)) {
+    const chosen = new Set(choices.meals);
+    for (const p of trip.places || []) if (p.category === 'comida' && p.meal) p.chosen = chosen.has(p.id);
+  }
+  return trip;
+}
+const choiceKey = (c) => JSON.stringify([c.packageId || '', Object.entries(c.groups || {}).sort(), [...(c.meals || [])].sort()]);
+export const sameChoices = (a, b) => choiceKey(a) === choiceKey(b);
+// Resumo de um cenário sem mexer na viagem (os km usam as rotas já calculadas).
+export function simulate(trip, choices) {
+  const copy = applyChoices(JSON.parse(JSON.stringify(trip)), choices);
+  return tripSummary(copy);
 }

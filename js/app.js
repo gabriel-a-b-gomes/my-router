@@ -3,7 +3,8 @@ import {
   dayPlaces, flightsOn, hasPos, dayPlan, dayColor, CATEGORIES, catIcon, EXP_CATS, plannedDay, spentOn,
   sumAmount, tripSummary, newTrip, flightLeg, carRental, carKm, computedDailies, LEG_CATS, flightKm, flightEnds,
   greatCircle, dayKm, pickupAfterFlight, returnBeforeFlight, haversineKm, MEALS, PRICE_TAGS, FOOD_STYLES,
-  mealPlan, placeCost, DURATIONS, fmtDuration,
+  mealPlan, placeCost, DURATIONS, fmtDuration, isActive, act, groupOf, currentChoices, applyChoices, sameChoices, simulate,
+  ensurePackages, activePackage, switchPackage, clonePackageData, packageCost, packageData,
 } from './util.js';
 import { api, getPassword, setPassword, geocode, getRoute } from './api.js';
 import { store, loadData, loadOffline, save, getTrip, onSync, replaceAll } from './store.js';
@@ -34,6 +35,8 @@ const ui = {
   kmMode: loadPref('roteiro:kmMode') === '1', // mostra os km entre cada etapa do dia
   editOpt: null, // opção de restaurante sendo editada no bloco Refeições
   homeTab: 'ativas', // 'ativas' | 'canceladas'
+  mapOnly: false, // celular: esconde os cadastros e deixa só o mapa
+  mapHidden: loadPref('roteiro:mapHidden') === '1', // celular: esconde o mapa (em todas as abas)
   mapBusy: new Map(), // tarefas em andamento mostradas sobre o mapa
 };
 
@@ -317,7 +320,7 @@ function route() {
 
 // ---------------------------------------------------------------- cartão de embarque
 function firstFlight(t, leg) {
-  return [...t.flights].filter((f) => flightLeg(t, f) === leg).sort((a, b) => (a.depart || '').localeCompare(b.depart || ''))[0];
+  return act(t.flights).filter((f) => flightLeg(t, f) === leg).sort((a, b) => (a.depart || '').localeCompare(b.depart || ''))[0];
 }
 
 function passHtml({ from, to, fromSub, toSub, metaLeft, metaRight, stubLabel, stubValue, stubSub, big = false }) {
@@ -486,6 +489,10 @@ function renderTrip() {
           <div id="map"></div>
           <div class="map-layers" id="map-layers" role="group" aria-label="Rotas visíveis no mapa"></div>
           <div class="map-status" id="map-status" role="status" hidden></div>
+          <div class="map-mobile-btns">
+            <button class="map-only-btn" id="map-only-btn" data-action="map-only" aria-pressed="false">⤢ Só o mapa</button>
+            <button class="map-only-btn map-hide-btn" data-action="map-hide" aria-label="Esconder o mapa">▴ Esconder mapa</button>
+          </div>
         </div>
       </main>`;
     mountMap(document.getElementById('map'));
@@ -511,7 +518,8 @@ function renderPanel() {
   const t = trip();
   if (!panel || !t) return;
   const layout = document.getElementById('layout');
-  const cls = `trip-layout tab-${ui.tab}${ui.pick ? ' picking' : ''}`;
+  const hidden = ui.mapHidden && !ui.mapOnly && !ui.pick;
+  const cls = `trip-layout tab-${ui.tab}${ui.pick ? ' picking' : ''}${ui.mapOnly ? ' map-only' : ''}${hidden ? ' map-hidden' : ''}`;
   if (layout.className !== cls) {
     layout.className = cls;
     refreshSize();
@@ -520,7 +528,8 @@ function renderPanel() {
   const html = { roteiro: panelRoteiro, gastos: panelGastos, reservas: panelReservas, resumo: panelResumo }[ui.tab](t);
   const cancelledBanner = t.cancelled ? `<div class="cancel-banner" role="status">Esta viagem está cancelada.
     <button class="btn small" data-action="trip-restore" data-id="${t.id}">Reativar</button></div>` : '';
-  panel.innerHTML = (ui.pick ? pickBanner() : '') + cancelledBanner + html;
+  const showMapBar = hidden ? '<button class="map-show-bar" data-action="map-hide">🗺️ Mostrar mapa</button>' : '';
+  panel.innerHTML = (ui.pick ? pickBanner() : '') + showMapBar + cancelledBanner + html;
   if (activeBind) panel.querySelector(`[data-bind="${CSS.escape(activeBind)}"]`)?.focus();
   updateMap();
   // calcula (com cache) as rotas que estão faltando para o que está na tela
@@ -598,8 +607,8 @@ function addressField(t, kind, obj, prefix, label, placeholder = '') {
     <label class="span2">${label}
       <span class="input-with-btn">
         <input data-bind="${kind}:${obj.id}.${field}" data-coords="${prefix}" value="${h(obj[field] || '')}" placeholder="${h(placeholder)}">
-        <button class="icon" data-action="locate" data-kind="${kind}" data-id="${obj.id}" data-prefix="${prefix}" title="Buscar endereço no mapa" aria-label="Buscar endereço no mapa" ${ui.busy[busyKey] ? 'disabled aria-busy="true"' : ''}>${ui.busy[busyKey] ? '<span class="spin-sm"></span>' : '🔎'}</button>
-        <button class="icon" data-action="pick" data-kind="${kind}" data-id="${obj.id}" data-prefix="${prefix}" data-label="${h(label.toLowerCase())}" title="Marcar no mapa" aria-label="Marcar no mapa">📍</button>
+        <button class="icon ibig" data-action="locate" data-kind="${kind}" data-id="${obj.id}" data-prefix="${prefix}" title="Buscar endereço no mapa" aria-label="Buscar endereço no mapa" ${ui.busy[busyKey] ? 'disabled aria-busy="true"' : ''}>${ui.busy[busyKey] ? '<span class="spin-sm"></span>' : '🔎'}</button>
+        <button class="icon ibig" data-action="pick" data-kind="${kind}" data-id="${obj.id}" data-prefix="${prefix}" data-label="${h(label.toLowerCase())}" title="Marcar no mapa" aria-label="Marcar no mapa">📍</button>
       </span>
       <span class="loc-status ${located ? 'ok' : 'muted'}">${ui.busy[busyKey] ? 'Procurando…' : located ? '✓ No mapa' : 'Ainda não está no mapa'}</span>
     </label>`;
@@ -673,6 +682,20 @@ function kmStages(t, i) {
   return `<span class="small stages">${parts.join('')}</span>`;
 }
 
+// alternativas de um passeio, logo abaixo do vigente
+function placeAlternatives(t, p) {
+  const others = groupOf(t.places, p).filter((x) => x !== p);
+  if (!others.length) return '';
+  return `<div class="alt-chips"><span class="muted small">Alternativas:</span>
+    ${others.map((x) => {
+      const diff = placeCost(t, x) - placeCost(t, p);
+      return `<span class="alt-chip"><b>${h(x.name)}</b>${num(x.duration) ? ` <span class="muted">${fmtDuration(x.duration)}</span>` : ''}
+        <span class="small ${diff > 0 ? 'error' : diff < 0 ? 'ok' : 'muted'}">${diff ? `${diff > 0 ? '+' : '−'}${money(Math.abs(diff), t.currency)}` : ''}</span>
+        <button class="btn small" data-action="opt-use" data-kind="place" data-id="${x.id}">Usar</button>
+        <button class="icon small-icon danger" data-action="remove-place" data-id="${x.id}" aria-label="Remover alternativa ${h(x.name)}">✕</button></span>`;
+    }).join('')}</div>`;
+}
+
 function flightRow(t, f, which) {
   const k = flightKm(f);
   return `<li class="anchor anchor-air"><span class="anchor-icon" aria-hidden="true">✈️</span>
@@ -691,7 +714,8 @@ function foodTags(p) {
 function newPlaceForm(t) {
   const np = ui.np;
   const isFood = np.category === 'comida';
-  const title = isFood && np.meal ? `Opção de ${MEALS[np.meal].label.toLowerCase()}${np.day != null ? ` · dia ${np.day + 1}` : ''}` : 'Novo lugar';
+  const altOf = np.altOf ? t.places.find((x) => x.id === np.altOf) : null;
+  const title = altOf ? `Alternativa para ${altOf.name}` : isFood && np.meal ? `Opção de ${MEALS[np.meal].label.toLowerCase()}${np.day != null ? ` · dia ${np.day + 1}` : ''}` : 'Novo lugar';
   return `
     <div class="card add-place">
       <div class="section-head"><h2>${title}</h2><button class="icon" data-action="np-cancel" aria-label="Fechar">✕</button></div>
@@ -783,8 +807,8 @@ function panelRoteiro(t) {
     return `<div class="empty card">Defina as datas da viagem na aba <a href="#/t/${t.id}/reservas">Reservas</a> para montar o roteiro.</div>`;
   }
   if (ui.day !== 'all' && ui.day >= days.length) ui.day = 'all';
-  const unplanned = t.places.filter((p) => p.day == null || p.day >= days.length);
-  const hasCar = t.cars.length > 0;
+  const unplanned = t.places.filter((p) => isActive(p) && (p.day == null || p.day >= days.length));
+  const hasCar = act(t.cars).length > 0;
 
   const dayChips = `
     <div class="day-chips" role="tablist" aria-label="Dias">
@@ -855,8 +879,8 @@ function panelRoteiro(t) {
       const leg = flightLeg(t, f);
       return (leg !== 'volta' && f.arrive?.startsWith(date) && !posOf(f, 'to')) || (leg !== 'ida' && f.depart?.startsWith(date) && !posOf(f, 'from'));
     });
-    const arrivals = t.flights.filter((f) => flightLeg(t, f) !== 'volta' && (f.arrive || '').startsWith(date));
-    const departures = t.flights.filter((f) => flightLeg(t, f) !== 'ida' && (f.depart || '').startsWith(date));
+    const arrivals = act(t.flights).filter((f) => flightLeg(t, f) !== 'volta' && (f.arrive || '').startsWith(date));
+    const departures = act(t.flights).filter((f) => flightLeg(t, f) !== 'ida' && (f.depart || '').startsWith(date));
     const kmText = dayKmText(i);
     const tourMin = ps.filter((p) => p.category !== 'comida').reduce((a, p) => a + num(p.duration), 0);
     const timeText = [tourMin ? `⏱️ ${fmtDuration(tourMin)} em passeios` : '', rf.route ? `${dur(rf.route.duration)} de deslocamento` : ''].filter(Boolean).join(' + ');
@@ -903,8 +927,10 @@ function panelRoteiro(t) {
             <div class="row wrap small">
               <button class="link" data-action="pick" data-kind="place" data-id="${p.id}" data-prefix="" data-label="${h(p.name)}">📍 ${hasPos(p) ? 'Ajustar no mapa' : 'Marcar no mapa'}</button>
               ${hasPos(p) ? `<a href="https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lng}#map=17/${p.lat}/${p.lng}" target="_blank" rel="noopener">Abrir no mapa</a>` : ''}
+              ${p.category === 'comida' ? '' : `<button class="link" data-action="alt-add" data-kind="place" data-id="${p.id}">⇄ Alternativa</button>`}
               <button class="link danger push-right" data-action="remove-place" data-id="${p.id}">Remover</button>
             </div>
+            ${placeAlternatives(t, p)}
           </li>`;
     };
     body = `
@@ -1246,7 +1272,7 @@ function panelReservas(t) {
         <label>Destino
           <span class="input-with-btn">
             <input data-bind="trip.destination" data-header data-rerender value="${h(t.destination)}">
-            <button class="icon" data-action="locate-dest" title="Localizar no mapa" aria-label="Localizar destino no mapa" ${ui.busy.dest ? 'disabled' : ''}>${ui.busy.dest ? '<span class="spin-sm"></span>' : hasPos(t.center) ? '✅' : '📍'}</button>
+            <button class="icon ibig" data-action="locate-dest" title="Localizar no mapa" aria-label="Localizar destino no mapa" ${ui.busy.dest ? 'disabled' : ''}>${ui.busy.dest ? '<span class="spin-sm"></span>' : hasPos(t.center) ? '✅' : '📍'}</button>
           </span>
         </label>
         ${inp('trip.startDate', 'Início', t.startDate, 'date', 'data-header data-rerender')}
@@ -1265,6 +1291,8 @@ function panelReservas(t) {
       </div>
     </section>
 
+    ${packagesHtml(t)}
+
     <section>
       <div class="section-head"><h2 class="section-h">Voos</h2><button class="btn small" data-action="add-flight">＋ Voo</button></div>
       ${t.flights.length ? '' : '<p class="muted small">Nenhum voo cadastrado.</p>'}
@@ -1274,7 +1302,7 @@ function panelReservas(t) {
     <section>
       <div class="section-head"><h2 class="section-h">Hospedagens</h2><button class="btn small" data-action="add-stay">＋ Hospedagem</button></div>
       ${t.stays.length ? '' : '<p class="muted small">Nenhuma hospedagem cadastrada.</p>'}
-      ${t.stays.map((s) => stayCard(t, s)).join('')}
+      ${t.stays.map((x) => stayCard(t, x)).join('')}
     </section>
 
     <section>
@@ -1293,6 +1321,90 @@ function panelReservas(t) {
         <button class="btn danger-outline" data-action="trip-delete" data-id="${t.id}">Excluir viagem</button>
       </div>
     </section>`;
+}
+
+// ---------- alternativas (opções de um mesmo voo/hotel/carro/passeio) ----------
+const LISTS = { place: 'places' };
+
+// ---------- pacotes de reservas ----------
+// Voos, hospedagens e carros pertencem a um pacote. Trocar o pacote troca tudo de uma vez.
+function packagesHtml(t) {
+  ensurePackages(t);
+  const cur = activePackage(t);
+  const c = t.currency;
+  const count = (p) => {
+    const d = packageData(t, p);
+    return [d.flights.length && `${d.flights.length} voo${d.flights.length > 1 ? 's' : ''}`, d.stays.length && `${d.stays.length} hospedage${d.stays.length > 1 ? 'ns' : 'm'}`, d.cars.length && `${d.cars.length} carro${d.cars.length > 1 ? 's' : ''}`].filter(Boolean).join(' · ') || 'vazio';
+  };
+  const curCost = packageCost(t, cur);
+  return `
+    <section class="card packages">
+      <div class="section-head"><h2>Pacote de reservas</h2><button class="btn small" data-action="pkg-new">＋ Novo pacote</button></div>
+      <p class="muted small">Voos, hospedagens e carro ficam dentro do pacote. Monte pacotes diferentes (ex.: "Econômico" e "Conforto") e troque entre eles: tudo muda de uma vez. Roteiro, refeições e gastos são os mesmos em todos.</p>
+      <div class="pkg-list" role="radiogroup" aria-label="Pacote vigente">
+        ${t.packages.map((p) => {
+          const on = p.id === cur.id;
+          const cost = packageCost(t, p);
+          const diff = cost - curCost;
+          return `
+          <div class="pkg ${on ? 'on' : ''}">
+            <button class="pkg-main" data-action="pkg-use" data-id="${p.id}" role="radio" aria-checked="${on}" ${on ? 'tabindex="-1"' : ''}>
+              <span class="pkg-radio" aria-hidden="true"></span>
+              <span class="grow"><b>${h(p.name)}</b><span class="muted small">${count(p)}</span></span>
+              <span class="pkg-cost"><b>${money(cost, c)}</b>${on ? '<span class="small">vigente</span>' : `<span class="small ${diff > 0 ? 'error' : diff < 0 ? 'ok' : 'muted'}">${diff ? `${diff > 0 ? '+' : '−'}${money(Math.abs(diff), c)}` : 'mesmo valor'}</span>`}</span>
+            </button>
+            <span class="pkg-actions">
+              <button class="icon small-icon" data-action="pkg-rename" data-id="${p.id}" aria-label="Renomear ${h(p.name)}" title="Renomear">✎</button>
+              ${t.packages.length > 1 ? `<button class="icon small-icon danger" data-action="pkg-del" data-id="${p.id}" aria-label="Excluir ${h(p.name)}" title="Excluir pacote">✕</button>` : ''}
+            </span>
+          </div>`;
+        }).join('')}
+      </div>
+      ${t.packages.length > 1 ? `<p class="small pkg-editing">Editando abaixo: <b>${h(cur.name)}</b></p>` : ''}
+    </section>`;
+}
+
+// Torna uma opção a vigente; no roteiro, ela assume o lugar (dia e ordem) da anterior.
+function useOption(t, kind, item) {
+  const members = groupOf(t[LISTS[kind]], item);
+  const prev = members.find((m) => m.active);
+  if (kind === 'place' && prev && prev !== item) Object.assign(item, { day: prev.day, order: prev.order, time: item.time || prev.time });
+  members.forEach((m) => { m.active = m === item; });
+}
+
+// Depois de remover uma opção: grupo de 1 vira item normal; sem vigente, a primeira assume.
+function fixGroup(arr, group) {
+  if (!group) return;
+  const members = arr.filter((x) => x.group === group);
+  if (members.length === 1) { delete members[0].group; delete members[0].active; }
+  else if (members.length && !members.some((m) => m.active)) members[0].active = true;
+}
+
+// Diálogo com um campo de texto (ex.: nome do cenário).
+function promptDialog({ title, label = '', value = '', confirmLabel = 'Salvar' }) {
+  return new Promise((resolve) => {
+    document.getElementById('confirm-dialog')?.remove();
+    const dlg = document.createElement('dialog');
+    dlg.id = 'confirm-dialog';
+    dlg.className = 'dialog';
+    dlg.innerHTML = `
+      <form method="dialog" class="dialog-body">
+        <h2>${h(title)}</h2>
+        <label>${h(label)}<input name="v" value="${h(value)}" maxlength="60" required></label>
+        <div class="dialog-actions">
+          <button class="btn ghost" value="cancel" formnovalidate>Voltar</button>
+          <button class="btn primary" value="ok">${h(confirmLabel)}</button>
+        </div>
+      </form>`;
+    document.body.appendChild(dlg);
+    const input = dlg.querySelector('input');
+    dlg.addEventListener('close', () => {
+      resolve(dlg.returnValue === 'ok' && input.value.trim() ? input.value.trim() : null);
+      setTimeout(() => dlg.remove(), 200);
+    });
+    dlg.showModal();
+    input.select();
+  });
 }
 
 async function locateDest(t) {
@@ -1315,7 +1427,7 @@ function panelResumo(t) {
   const today = localToday();
   const groups = [
     ['reservas', 'Reservas', 'Valores das reservas, considerados já pagos.'],
-    ['carro', 'Carro durante a viagem', t.cars.length ? `Combustível pelos km previstos: ${Math.round(s.kmCar)} km (rotas dos dias com carro + km fora do roteiro). Cada km entra uma vez só.` : ''],
+    ['carro', 'Carro durante a viagem', act(t.cars).length ? `Combustível pelos km previstos: ${Math.round(s.kmCar)} km (rotas dos dias com carro + km fora do roteiro). Cada km entra uma vez só.` : ''],
     ['dia', 'Dia a dia', 'Previsto pelo orçamento diário e pelos custos dos lugares do roteiro.'],
   ];
   const rowHtml = ([, label, p, g, group]) => {
@@ -1345,11 +1457,13 @@ function panelResumo(t) {
       </div>
       <div class="chips">
         ${['rental', 'transfer', 'drive', 'foot', 'bike'].filter((c) => s.km.byCat[c] > 0.05).map((c) => `<span class="chip">${LEG_CATS[c].icon} ${LEG_CATS[c].label} ${km(s.km.byCat[c] * 1000)}</span>`).join('')}
-        ${t.cars.reduce((a, c) => a + num(c.extraKm), 0) ? `<span class="chip">🚗 Fora do roteiro ${kmFmt(t.cars.reduce((a, c) => a + num(c.extraKm), 0))}</span>` : ''}
+        ${act(t.cars).reduce((a, c) => a + num(c.extraKm), 0) ? `<span class="chip">🚗 Fora do roteiro ${kmFmt(act(t.cars).reduce((a, c) => a + num(c.extraKm), 0))}</span>` : ''}
       </div>
       ${s.km.flightsMissing ? `<p class="muted small">${s.km.flightsMissing} voo(s) sem os dois aeroportos no mapa ficaram fora da conta de avião. Complete em Reservas.</p>` : ''}
       <p class="muted small">Só os km do carro alugado (trechos depois da retirada e antes da devolução, mais os km fora do roteiro) entram no combustível.</p>
     </section>
+
+    ${scenariosHtml(t, s)}
 
     <section class="card">
       <h2>Por categoria</h2>
@@ -1397,6 +1511,50 @@ function panelResumo(t) {
         </table>
       </div>
       <p class="muted small">O previsto do dia soma alimentação, passeios e transporte (ou combustível e estacionamento nos dias com carro). Os km fora do roteiro e os pedágios entram só no total do carro, acima.${ui.features.routes ? '' : ' * = distância estimada em linha reta.'}</p>
+    </section>`;
+}
+
+// ---------------------------------------------------------------- cenários
+function scenariosHtml(t, cur) {
+  t.scenarios ??= [];
+  ensurePackages(t);
+  const groups = t.packages.length - 1 + new Set(t.places.filter((x) => x.group).map((x) => x.group)).size;
+  const now = currentChoices(t);
+  const c = t.currency;
+  // composição: só categorias com valor
+  const parts = (sum) => sum.rows.filter((r) => ['voos', 'hospedagem', 'carro', 'passeios', 'comida'].includes(r[0]) && r[2] > 0)
+    .map((r) => `<span>${r[1].split(' ')[0]} ${money(r[2], c)}</span>`).join('');
+  const pkgName = (ch) => t.packages?.find((p) => p.id === ch?.packageId)?.name;
+  const card = ({ name, sum, diff, using, id, choices }) => `
+    <div class="scn ${using ? 'scn-using' : ''}">
+      <div class="scn-head">
+        <b>${h(name)}</b>${using ? '<span class="tag">em uso</span>' : ''}
+        <span class="scn-total">${money(sum.planned, c)}</span>
+      </div>
+      ${pkgName(choices) && t.packages.length > 1 ? `<div class="small">🎫 ${h(pkgName(choices))}</div>` : ''}
+      <div class="scn-parts">${parts(sum)}</div>
+      ${id ? `
+      <div class="scn-foot">
+        <span class="small ${diff > 0 ? 'error' : diff < 0 ? 'ok' : 'muted'}">${diff ? `${diff > 0 ? '+' : '−'}${money(Math.abs(diff), c)} em relação às escolhas atuais` : 'Igual às escolhas atuais'}</span>
+        <span class="row push-right">
+          ${using ? '' : `<button class="btn small primary" data-action="scn-apply" data-id="${id}">Aplicar</button>`}
+          <button class="icon small-icon danger" data-action="scn-del" data-id="${id}" aria-label="Excluir cenário ${h(name)}" title="Excluir cenário">✕</button>
+        </span>
+      </div>` : ''}
+    </div>`;
+  return `
+    <section class="card scenarios">
+      <div class="section-head"><h2>Cenários</h2><button class="btn small" data-action="scn-save">＋ Salvar escolhas atuais</button></div>
+      <p class="muted small">Um cenário guarda o pacote de reservas vigente, os passeios escolhidos entre as alternativas e os restaurantes escolhidos. ${groups ? '' : 'Crie pacotes em Reservas ou alternativas de passeio (⇄) no Roteiro para ter o que comparar.'}</p>
+      ${t.scenarios.length ? `
+      <div class="scn-list">
+        ${t.scenarios.some((sc) => sameChoices(sc.choices, now)) ? '' : card({ name: 'Escolhas atuais (não salvas)', sum: cur, using: true, choices: now })}
+        ${t.scenarios.map((sc) => {
+          const sim = simulate(t, sc.choices);
+          return card({ name: sc.name, sum: sim, diff: sim.planned - cur.planned, using: sameChoices(sc.choices, now), id: sc.id, choices: sc.choices });
+        }).join('')}
+      </div>
+      <p class="muted small">Os km e o combustível dos cenários usam as rotas já calculadas; ao aplicar um cenário, as rotas são refeitas.</p>` : ''}
     </section>`;
 }
 
@@ -1491,9 +1649,9 @@ function updateMap() {
       const rf = dayLines(i);
       [rf.start, rf.pickup, rf.ret, rf.end].forEach((a) => addAnchor(a));
     });
-    t.places.filter((p) => p.day == null || p.day >= days.length).forEach((p) => hasPos(p) && markers.push({ lat: p.lat, lng: p.lng, label: '•', color: dayColor(null), cls: 'small', popup: placePopup(p, '<br>Ainda sem dia') }));
-    for (const s of t.stays) addAnchor({ ...s, icon: '🏨' }, `<b>${h(s.name)}</b>${s.checkin ? `<br>${fmtDate(s.checkin)} → ${fmtDate(s.checkout)}` : ''}`);
-    flightLines(t.flights);
+    t.places.filter((p) => isActive(p) && (p.day == null || p.day >= days.length)).forEach((p) => hasPos(p) && markers.push({ lat: p.lat, lng: p.lng, label: '•', color: dayColor(null), cls: 'small', popup: placePopup(p, '<br>Ainda sem dia') }));
+    for (const s of act(t.stays)) addAnchor({ ...s, icon: '🏨' }, `<b>${h(s.name)}</b>${s.checkin ? `<br>${fmtDate(s.checkin)} → ${fmtDate(s.checkout)}` : ''}`);
+    flightLines(act(t.flights));
   }
 
   // formulário de novo lugar: resultados da busca e posição escolhida
@@ -1545,6 +1703,7 @@ function setBound(t, path, el) {
     const d = raw === '' ? null : Number(raw);
     obj.day = d;
     obj.order = d == null ? 0 : Math.max(-1, ...dayPlaces(t, d).filter((p) => p.id !== obj.id).map((p) => p.order)) + 1;
+    for (const x of groupOf(t.places, obj)) if (x !== obj) Object.assign(x, { day: obj.day, order: obj.order });
     return;
   }
   obj[field] = typeof value === 'string' && (field === 'from' || field === 'to') ? value.toUpperCase() : value;
@@ -1598,7 +1757,7 @@ document.addEventListener('submit', async (e) => {
   }
   if (kind === 'new-trip') {
     if (fd.endDate < fd.startDate) return toast('A data final é anterior à inicial.', 'error');
-    const nt = newTrip({ ...fd, travelers: Math.max(1, num(fd.travelers)) });
+    const nt = ensurePackages(newTrip({ ...fd, travelers: Math.max(1, num(fd.travelers)) }));
     store.data.trips.push(nt);
     save();
     location.hash = `#/t/${nt.id}/reservas`;
@@ -1683,6 +1842,7 @@ document.addEventListener('click', async (e) => {
       const p = t.places.find((x) => x.id === el.dataset.id);
       if (p && await confirmDialog({ title: `Remover "${p.name}"?`, message: 'O lugar sai do roteiro e do mapa.', confirmLabel: 'Remover', danger: true })) {
         t.places = t.places.filter((x) => x !== p);
+        fixGroup(t.places, p.group);
         save();
         renderPanel();
       }
@@ -1706,6 +1866,127 @@ document.addEventListener('click', async (e) => {
       el.title = show ? 'Ocultar senha' : 'Mostrar senha';
       input.focus();
       return;
+    }
+    case 'map-hide':
+      ui.mapHidden = !ui.mapHidden;
+      ui.mapOnly = false;
+      savePref('roteiro:mapHidden', ui.mapHidden ? '1' : '0');
+      document.getElementById('map-only-btn')?.replaceChildren('⤢ Só o mapa');
+      renderPanel();
+      if (!ui.mapHidden) window.scrollTo(0, 0);
+      return;
+    case 'map-only': {
+      ui.mapOnly = !ui.mapOnly;
+      el.setAttribute('aria-pressed', ui.mapOnly);
+      el.textContent = ui.mapOnly ? '☰ Mostrar cadastros' : '⤢ Só o mapa';
+      if (ui.mapOnly) window.scrollTo(0, 0);
+      return renderPanel();
+    }
+    case 'alt-add': {
+      const { kind, id } = el.dataset;
+      const item = t[LISTS[kind]].find((x) => x.id === id);
+      if (!item) return;
+      if (kind === 'place') {
+        ui.np = { ...freshNewPlace(item.day), open: true, category: item.category, altOf: item.id };
+        renderPanel();
+        document.getElementById('panel')?.scrollTo?.({ top: 0, behavior: 'smooth' });
+        if (window.innerWidth < 900) document.querySelector('.add-place')?.scrollIntoView({ block: 'start' });
+        document.querySelector('[data-np="query"]')?.focus({ preventScroll: true });
+        return;
+      }
+      return;
+    }
+    case 'pkg-use': {
+      const pkg = t.packages.find((x) => x.id === el.dataset.id);
+      if (!pkg || pkg.id === t.packageId) return;
+      switchPackage(t, pkg.id);
+      ui.open.clear();
+      save();
+      renderPanel();
+      toast(`Pacote "${pkg.name}" vigente. Rotas e custos atualizados.`, 'ok');
+      return;
+    }
+    case 'pkg-new': {
+      ensurePackages(t);
+      const cur = activePackage(t);
+      const how = await choiceDialog({
+        title: 'Novo pacote de reservas',
+        message: 'O novo pacote passa a ser o vigente, e você edita os voos, hospedagens e carro dele.',
+        choices: [
+          { value: 'copy', label: `Copiar "${cur.name}"`, hint: 'Começa com as mesmas reservas; você troca só o que muda.', cls: 'primary' },
+          { value: 'empty', label: 'Começar vazio', hint: 'Sem voos, hospedagens nem carro.' },
+        ],
+      });
+      if (!how) return;
+      const name = await promptDialog({ title: 'Nome do pacote', label: 'Ex.: Econômico, Conforto, Resort', value: `Pacote ${'ABCDEFGHIJ'[t.packages.length] || t.packages.length + 1}`, confirmLabel: 'Criar' });
+      if (!name) return;
+      const data = how === 'copy' ? clonePackageData(packageData(t, cur)) : { flights: [], stays: [], cars: [] };
+      const pkg = { id: uid(), name, ...data };
+      t.packages.push(pkg);
+      switchPackage(t, pkg.id);
+      ui.open.clear();
+      save();
+      renderPanel();
+      toast(`Pacote "${name}" criado e vigente.`, 'ok');
+      return;
+    }
+    case 'pkg-rename': {
+      const pkg = t.packages.find((x) => x.id === el.dataset.id);
+      if (!pkg) return;
+      const name = await promptDialog({ title: 'Renomear pacote', label: 'Nome', value: pkg.name });
+      if (!name) return;
+      pkg.name = name;
+      save();
+      return renderPanel();
+    }
+    case 'pkg-del': {
+      const pkg = t.packages.find((x) => x.id === el.dataset.id);
+      if (!pkg || t.packages.length < 2) return;
+      if (!await confirmDialog({ title: `Excluir o pacote "${pkg.name}"?`, message: 'Os voos, hospedagens e carros desse pacote são apagados. Os outros pacotes não mudam.', confirmLabel: 'Excluir pacote', danger: true })) return;
+      if (pkg.id === t.packageId) switchPackage(t, t.packages.find((x) => x.id !== pkg.id).id);
+      t.packages = t.packages.filter((x) => x !== pkg);
+      t.scenarios = (t.scenarios || []).filter((sc) => sc.choices.packageId !== pkg.id);
+      save();
+      renderPanel();
+      toast(`Pacote "${pkg.name}" excluído.`, 'ok');
+      return;
+    }
+    case 'opt-use': {
+      const { kind, id } = el.dataset;
+      const item = t[LISTS[kind]].find((x) => x.id === id);
+      if (!item) return;
+      useOption(t, kind, item);
+      save();
+      renderPanel();
+      toast('Opção vigente trocada. Rotas e custos já foram atualizados.', 'ok');
+      return;
+    }
+    case 'scn-save': {
+      t.scenarios ??= [];
+      const now = currentChoices(t);
+      const dup = t.scenarios.find((x) => sameChoices(x.choices, now));
+      if (dup) return toast(`Essas escolhas já estão salvas como "${dup.name}".`, 'warn');
+      const name = await promptDialog({ title: 'Salvar cenário', label: 'Nome do cenário', value: `Cenário ${t.scenarios.length + 1}` });
+      if (!name) return;
+      t.scenarios.push({ id: uid(), name, choices: now, createdAt: new Date().toISOString() });
+      save();
+      return renderPanel();
+    }
+    case 'scn-apply': {
+      const sc = t.scenarios.find((x) => x.id === el.dataset.id);
+      if (!sc) return;
+      applyChoices(t, sc.choices);
+      save();
+      renderPanel();
+      toast(`Cenário "${sc.name}" aplicado.`, 'ok');
+      return;
+    }
+    case 'scn-del': {
+      const sc = t.scenarios.find((x) => x.id === el.dataset.id);
+      if (!sc || !await confirmDialog({ title: `Excluir o cenário "${sc.name}"?`, message: 'As opções continuam cadastradas; só a combinação salva é removida.', confirmLabel: 'Excluir', danger: true })) return;
+      t.scenarios = t.scenarios.filter((x) => x !== sc);
+      save();
+      return renderPanel();
     }
     case 'home-tab':
       ui.homeTab = el.dataset.tab;
@@ -1791,6 +2072,7 @@ document.addEventListener('click', async (e) => {
       if (!np.name.trim()) return toast('Dê um nome ao lugar.', 'warn');
       const isFood = np.category === 'comida';
       const isOpt = isFood && !!np.meal;
+      const altOf = np.altOf ? t.places.find((x) => x.id === np.altOf) : null;
       const order = np.day == null || isOpt ? 0 : Math.max(-1, ...dayPlaces(t, np.day).map((p) => p.order)) + 1;
       const place = {
         id: uid(), name: np.name.trim(), address: np.address, lat: hasPos(np) ? np.lat : null, lng: hasPos(np) ? np.lng : null,
@@ -1799,9 +2081,15 @@ document.addEventListener('click', async (e) => {
           ? { meal: np.meal || '', price: np.price, style: np.style, costPP: num(np.costPP), chosen: false, cost: 0 }
           : { duration: num(np.duration), cost: num(np.cost) }),
       };
+      if (altOf) {
+        if (!altOf.group) { altOf.group = uid(); altOf.active = true; }
+        Object.assign(place, { group: altOf.group, active: false, day: altOf.day, order: altOf.order });
+      }
       t.places.push(place);
       save();
-      toast(isOpt
+      toast(altOf
+        ? `"${place.name}" adicionado como alternativa de "${altOf.name}". Toque em "Usar" para trocar.`
+        : isOpt
         ? `"${place.name}" adicionado como opção de ${MEALS[np.meal].label.toLowerCase()}${np.day == null ? '' : ` do dia ${np.day + 1}`}.`
         : `"${place.name}" adicionado${np.day == null ? ' em "Para encaixar"' : ` ao dia ${np.day + 1}`}.`, 'ok');
       if (ui.pick?.kind === 'new') cancelPick();
@@ -1861,7 +2149,9 @@ document.addEventListener('click', async (e) => {
     }
     case 'del-flight':
       if (!await confirmDialog({ title: 'Remover este voo?', confirmLabel: 'Remover', danger: true })) return;
-      t.flights = t.flights.filter((f) => f.id !== el.dataset.id);
+      { const g = t.flights.find((f) => f.id === el.dataset.id)?.group;
+        t.flights = t.flights.filter((f) => f.id !== el.dataset.id);
+        fixGroup(t.flights, g); }
       save();
       return renderPanel();
     case 'add-stay': {
@@ -1873,7 +2163,9 @@ document.addEventListener('click', async (e) => {
     }
     case 'del-stay':
       if (!await confirmDialog({ title: 'Remover esta hospedagem?', confirmLabel: 'Remover', danger: true })) return;
-      t.stays = t.stays.filter((s) => s.id !== el.dataset.id);
+      { const g = t.stays.find((x) => x.id === el.dataset.id)?.group;
+        t.stays = t.stays.filter((x) => x.id !== el.dataset.id);
+        fixGroup(t.stays, g); }
       save();
       return renderPanel();
     case 'add-car': {
@@ -1889,7 +2181,9 @@ document.addEventListener('click', async (e) => {
     }
     case 'del-car':
       if (!await confirmDialog({ title: 'Remover este carro?', message: 'Os valores do aluguel e os km do carro saem do previsto.', confirmLabel: 'Remover', danger: true })) return;
-      t.cars = t.cars.filter((c) => c.id !== el.dataset.id);
+      { const g = t.cars.find((x) => x.id === el.dataset.id)?.group;
+        t.cars = t.cars.filter((x) => x.id !== el.dataset.id);
+        fixGroup(t.cars, g); }
       save();
       return renderPanel();
     case 'same-return': {
