@@ -27,6 +27,15 @@ Cada voo aparece como um cartão de embarque. Em "Editar voo", informe:
 
 Com os dois aeroportos no mapa, o app calcula a **distância de avião** em linha reta e desenha o arco do voo. Ela fica separada dos km por terra e **nunca entra no carro**. No dia da chegada, a rota começa no aeroporto; no dia da volta, termina nele.
 
+### Cancelar ou excluir uma viagem
+- **Na tela inicial:** toque em ⋯ no cartão da viagem.
+- **Dentro da viagem:** use a aba Reservas → **Gerenciar viagem**.
+
+| Ação | O que acontece |
+|---|---|
+| **Cancelar** | A viagem sai da lista principal e vai para a aba **Canceladas**, com tudo guardado. Dá para abrir e **reativar** quando quiser. |
+| **Excluir** | Apaga a viagem com reservas, roteiro e gastos, também da nuvem. Não dá para desfazer; exporte um backup antes se quiser guardar uma cópia. |
+
 ### Refeições (almoço e jantar)
 Na visão de cada dia, o bloco **Refeições** mostra:
 - ☕ **Café da manhã:** sempre no hotel do dia.
@@ -105,6 +114,8 @@ Nos dias com carro:
 - **Gasto:** voos, hospedagem e aluguel do carro contam como já pagos. O restante vem dos lançamentos da aba Gastos.
 
 Outros recursos:
+- Seletor de tema (automático, claro ou escuro): no ícone do topo de qualquer tela ou em Configuração. A escolha fica salva no aparelho.
+- Botão de olho no login para mostrar a senha enquanto digita.
 - Funciona sem internet. Você pode lançar gastos no meio do passeio, e eles sincronizam quando a conexão volta.
 - Tem tema escuro automático.
 - Permite exportar e importar backup.

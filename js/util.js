@@ -444,6 +444,7 @@ export function normalizeTrip(t) {
   t.flights ??= [];
   t.stays ??= [];
   t.dayStats ??= {};
+  t.cancelled ??= false;
   for (const f of t.flights) f.leg ??= '';
   t.almocoBudget ??= 0; // orçamento por pessoa quando não há restaurante escolhido
   t.jantarBudget ??= 0;

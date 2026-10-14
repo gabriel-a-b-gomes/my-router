@@ -27,9 +27,9 @@
   --font-body: "Figtree", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   color-scheme: light;
 }
+/* tema escuro: automático (sistema) ou escolhido no app */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #071820;
+  :root:not([data-theme="light"]) { --bg: #071820;
     --surface: #0e2530;
     --surface-2: #15313d;
     --ink: #e4eff2;
@@ -47,9 +47,28 @@
     --warn: #f2b33d;
     --ok: #5cd08f;
     --shadow: 0 1px 2px rgba(0, 0, 0, .35);
-    color-scheme: dark;
-  }
+    color-scheme: dark; }
 }
+:root[data-theme="dark"] { --bg: #071820;
+    --surface: #0e2530;
+    --surface-2: #15313d;
+    --ink: #e4eff2;
+    --muted: #8ea7b0;
+    --border: #1f3f4b;
+    --ocean: #04121a;
+    --ocean-2: #0b2f3d;
+    --on-ocean: #dcecf0;
+    --primary: #3cc4bf;
+    --primary-ink: #03252a;
+    --primary-soft: #113f44;
+    --sun: #f5c058;
+    --iata: #e4eff2;
+    --danger: #f07167;
+    --warn: #f2b33d;
+    --ok: #5cd08f;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .35);
+    color-scheme: dark; }
+
 
 * { box-sizing: border-box; }
 html, body { margin: 0; }
@@ -206,8 +225,8 @@ label > input, label > select, label > .input-with-btn { color: var(--ink); font
   display: grid; grid-template-columns: 1fr auto; text-decoration: none; color: inherit;
   background: var(--surface); border-radius: var(--r-md); box-shadow: var(--shadow); overflow: hidden;
 }
-.ticket-main { padding: .9rem 1rem; display: flex; flex-direction: column; gap: .1rem; min-width: 0; }
-.ticket-main b { font-family: var(--font-display); font-size: 1.05rem; }
+.ticket-main { position: relative; padding: .9rem 1rem; display: flex; flex-direction: column; gap: .1rem; min-width: 0; }
+.ticket-main b { display: inline-flex; max-width: calc(100% - (.9rem + 32px)); width: 100%; font-family: var(--font-display); font-size: 1.05rem; }
 .ticket-stub {
   position: relative; padding: .9rem .9rem; display: flex; flex-direction: column; justify-content: center; align-items: flex-end;
   border-left: 2px dashed var(--border); color: var(--muted); text-align: right;
@@ -216,7 +235,19 @@ label > input, label > select, label > .input-with-btn { color: var(--ink); font
 .ticket-stub::before, .ticket-stub::after { content: ""; position: absolute; left: -9px; width: 16px; height: 16px; border-radius: 50%; background: var(--notch); }
 .ticket-stub::before { top: -8px; }
 .ticket-stub::after { bottom: -8px; }
+.ticket { position: relative; }
 .ticket:hover { box-shadow: 0 0 0 2px var(--primary), var(--shadow); }
+.ticket-link { color: inherit; text-decoration: none; }
+.ticket-link::after { content: ""; position: absolute; inset: 0; border-radius: inherit; } /* o cartão inteiro abre a viagem */
+.ticket-menu, .ticket-actions { position: relative; z-index: 2; }
+.ticket-menu {
+  position: absolute; top: .45rem; right: .45rem; width: 32px; height: 32px; border-radius: 10px; border: 0; cursor: pointer;
+  background: transparent; color: var(--muted); font-size: 1.2rem; line-height: 1;
+}
+.ticket-menu:hover { background: var(--surface-2); color: var(--ink); }
+.ticket-actions { display: flex; gap: .4rem; margin-top: .5rem; }
+.ticket.cancelled { opacity: .85; }
+.ticket.cancelled .ticket-main b { text-decoration: line-through; text-decoration-color: var(--danger); }
 .ticket.past { opacity: .6; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; align-items: end; }
 .form-grid > label.span2 { align-self: start; }
@@ -430,14 +461,20 @@ label > input, label > select, label > .input-with-btn { color: var(--ink); font
 .leaflet-popup-content { font: 14px/1.4 var(--font-body); }
 .leaflet-popup-content .btn { margin-top: .4rem; }
 .leaflet-popup-content-wrapper { border-radius: var(--r-md); }
+/* tema escuro: automático (sistema) ou escolhido no app */
 @media (prefers-color-scheme: dark) {
-  /* escurece o mapa claro do OpenStreetMap no tema escuro */
-  .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.95) contrast(.9); }
-  .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--surface); color: var(--ink); }
-  .leaflet-container a.leaflet-popup-close-button { color: var(--muted); }
-  .leaflet-bar a { background: var(--surface); color: var(--ink); border-color: var(--border); }
-  .leaflet-control-attribution { background: rgba(0, 0, 0, .55) !important; color: #ccc; }
+  :root:not([data-theme="light"]) .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.95) contrast(.9); }
+  :root:not([data-theme="light"]) .leaflet-popup-content-wrapper, :root:not([data-theme="light"]) .leaflet-popup-tip { background: var(--surface); color: var(--ink); }
+  :root:not([data-theme="light"]) .leaflet-container a.leaflet-popup-close-button { color: var(--muted); }
+  :root:not([data-theme="light"]) .leaflet-bar a { background: var(--surface); color: var(--ink); border-color: var(--border); }
+  :root:not([data-theme="light"]) .leaflet-control-attribution { background: rgba(0, 0, 0, .55) !important; color: #ccc; }
 }
+:root[data-theme="dark"] .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.95) contrast(.9); }
+:root[data-theme="dark"] .leaflet-popup-content-wrapper, :root[data-theme="dark"] .leaflet-popup-tip { background: var(--surface); color: var(--ink); }
+:root[data-theme="dark"] .leaflet-container a.leaflet-popup-close-button { color: var(--muted); }
+:root[data-theme="dark"] .leaflet-bar a { background: var(--surface); color: var(--ink); border-color: var(--border); }
+:root[data-theme="dark"] .leaflet-control-attribution { background: rgba(0, 0, 0, .55) !important; color: #ccc; }
+
 
 /* ---------- toast ---------- */
 .toast {
@@ -545,11 +582,16 @@ label.check small { color: var(--muted); font-weight: 400; font-size: .8rem; lin
 .flag-medio { background: #fdf0d0; color: #8a5a00; }
 .flag-caro { background: #fbdcd8; color: #9b2c20; }
 .flag-meal { background: var(--ocean); color: var(--on-ocean); }
+/* tema escuro: automático (sistema) ou escolhido no app */
 @media (prefers-color-scheme: dark) {
-  .flag-barato { background: #12402a; color: #8fe0b4; }
-  .flag-medio { background: #4a3a10; color: #f5d27a; }
-  .flag-caro { background: #4d1d18; color: #f7a99f; }
+  :root:not([data-theme="light"]) .flag-barato { background: #12402a; color: #8fe0b4; }
+  :root:not([data-theme="light"]) .flag-medio { background: #4a3a10; color: #f5d27a; }
+  :root:not([data-theme="light"]) .flag-caro { background: #4d1d18; color: #f7a99f; }
 }
+:root[data-theme="dark"] .flag-barato { background: #12402a; color: #8fe0b4; }
+:root[data-theme="dark"] .flag-medio { background: #4a3a10; color: #f5d27a; }
+:root[data-theme="dark"] .flag-caro { background: #4d1d18; color: #f7a99f; }
+
 .meals-line { color: var(--ink); }
 
 /* ---------- v5: modo km ---------- */
@@ -566,3 +608,38 @@ label.check small { color: var(--muted); font-weight: 400; font-size: .8rem; lin
   width: auto; height: 22px; margin: 1px auto; padding: 0 .5rem; border-radius: 999px; display: grid; place-items: center;
   background: var(--sun); color: #0d3b4f; border: 2px solid #fff; font: 700 11px/1 var(--font-display); white-space: nowrap;
 }
+
+/* ---------- v6: cancelar / excluir viagem ---------- */
+.btn.danger-outline { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); background: transparent; }
+.btn.danger-outline:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); border-color: var(--danger); }
+.seg { display: inline-flex; background: var(--surface-2); border-radius: 999px; padding: 3px; gap: 2px; }
+.seg button { font: 600 .82rem/1 var(--font-body); border: 0; background: transparent; color: var(--muted); padding: .45rem .8rem; border-radius: 999px; cursor: pointer; }
+.seg button span { opacity: .7; margin-left: .2rem; }
+.seg button.active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.cancel-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: .6rem;
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface)); color: var(--danger);
+  border-radius: var(--r-md); padding: .65rem .85rem; font-weight: 600; font-size: .9rem;
+}
+.manage { border: 1px dashed color-mix(in srgb, var(--danger) 35%, transparent); box-shadow: none; }
+.dialog-choices { display: flex; flex-direction: column; gap: .45rem; margin-top: .9rem; }
+.dialog-choices .btn { justify-content: flex-start; flex-direction: column; align-items: flex-start; gap: .2rem; border-radius: var(--r-md); padding: .8rem 1rem; white-space: normal; text-align: left; }
+.dialog-choices .btn small { font-weight: 400; font-size: .78rem; opacity: .8; }
+.dialog-choices .btn.ghost { align-items: center; }
+
+/* ---------- v7: tema e senha ---------- */
+.theme-btn {
+  width: 36px; height: 36px; border-radius: 12px; border: 0; cursor: pointer; flex: none;
+  background: rgba(255, 255, 255, .1); color: inherit; font-size: 1.05rem; display: grid; place-items: center;
+}
+.theme-btn:hover { background: rgba(255, 255, 255, .2); }
+.top-actions { display: inline-flex; align-items: center; gap: .6rem; }
+.login-theme { position: fixed; top: calc(14px + env(safe-area-inset-top)); right: 14px; color: #fff; }
+.setting-row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; flex-wrap: wrap; margin: .3rem 0 .6rem; font-weight: 600; }
+.pw-wrap { position: relative; }
+.pw-wrap input { padding-right: 3rem; }
+.pw-eye {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 40px; height: 40px;
+  border: 0; border-radius: 10px; background: transparent; color: var(--muted); cursor: pointer; display: grid; place-items: center;
+}
+.pw-eye:hover, .pw-eye[aria-pressed="true"] { color: var(--primary); background: var(--surface-2); }

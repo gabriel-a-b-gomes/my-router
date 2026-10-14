@@ -33,11 +33,39 @@ const ui = {
   layers: loadLayers(), // camadas visíveis no mapa
   kmMode: loadPref('roteiro:kmMode') === '1', // mostra os km entre cada etapa do dia
   editOpt: null, // opção de restaurante sendo editada no bloco Refeições
+  homeTab: 'ativas', // 'ativas' | 'canceladas'
   mapBusy: new Map(), // tarefas em andamento mostradas sobre o mapa
 };
 
 function loadPref(key) { try { return localStorage.getItem(key); } catch { return null; } }
 function savePref(key, v) { try { localStorage.setItem(key, v); } catch {} }
+// ---------- tema (automático / claro / escuro) ----------
+const THEMES = { auto: ['🖥️', 'Automático'], light: ['☀️', 'Claro'], dark: ['🌙', 'Escuro'] };
+const getTheme = () => (THEMES[loadPref('roteiro:theme')] ? loadPref('roteiro:theme') : 'auto');
+function applyTheme(th) {
+  if (th === 'auto') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = th;
+  savePref('roteiro:theme', th);
+  document.querySelectorAll('.theme-btn').forEach((b) => { b.outerHTML = themeButton(); });
+  document.querySelectorAll('.theme-seg button').forEach((b) => {
+    const on = b.dataset.next === th;
+
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-checked', on);
+  });
+}
+function themeButton() {
+  const th = getTheme();
+  const next = { auto: 'light', light: 'dark', dark: 'auto' }[th];
+  return `<button class="theme-btn" data-action="theme" data-next="${next}" title="Tema: ${THEMES[th][1]}. Toque para ${THEMES[next][1].toLowerCase()}" aria-label="Tema ${THEMES[th][1]}. Trocar para ${THEMES[next][1]}">${THEMES[th][0]}</button>`;
+}
+const themeSeg = () => `
+  <div class="seg theme-seg" role="radiogroup" aria-label="Tema">
+    ${Object.entries(THEMES).map(([k, [icon, label]]) => {
+      return (`<button class="${getTheme() === k ? 'active' : ''}" data-action="theme" data-next="${k}" role="radio" aria-checked="${`${getTheme()}` === k}">${icon} ${label}</button>`)
+    }).join('')}
+  </div>`;
+
 function loadLayers() {
   const def = { air: true, car: true, foot: true };
   try { return { ...def, ...JSON.parse(localStorage.getItem('roteiro:layers') || '{}') }; } catch { return def; }
@@ -84,7 +112,7 @@ function confirmDialog({ title, message = '', confirmLabel = 'Confirmar', danger
         <h2>${h(title)}</h2>
         ${message ? `<p>${h(message)}</p>` : ''}
         <div class="dialog-actions">
-          <button class="btn ghost" value="cancel">Cancelar</button>
+          <button class="btn ghost" value="cancel">Voltar</button>
           <button class="btn ${danger ? 'danger' : 'primary'}" value="ok">${h(confirmLabel)}</button>
         </div>
       </form>`;
@@ -97,6 +125,60 @@ function confirmDialog({ title, message = '', confirmLabel = 'Confirmar', danger
     dlg.showModal();
     dlg.querySelector('button[value="ok"]').focus();
   });
+}
+
+// Diálogo com várias ações; devolve o valor da escolhida (ou null).
+function choiceDialog({ title, message = '', choices }) {
+  return new Promise((resolve) => {
+    document.getElementById('confirm-dialog')?.remove();
+    const dlg = document.createElement('dialog');
+    dlg.id = 'confirm-dialog';
+    dlg.className = 'dialog';
+    dlg.innerHTML = `
+      <form method="dialog" class="dialog-body">
+        <h2>${h(title)}</h2>
+        ${message ? `<p>${h(message)}</p>` : ''}
+        <div class="dialog-choices">
+          ${choices.map((c) => `<button class="btn ${c.cls || ''}" value="${c.value}"><span class="choice-label">${h(c.label)}</span>${c.hint ? `<small>${h(c.hint)}</small>` : ''}</button>`).join('')}
+          <button class="btn ghost" value="__back">Voltar</button>
+        </div>
+      </form>`;
+    document.body.appendChild(dlg);
+    dlg.addEventListener('close', () => {
+      resolve(dlg.returnValue && dlg.returnValue !== '__back' ? dlg.returnValue : null);
+      setTimeout(() => dlg.remove(), 200);
+    });
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close('__back'); });
+    dlg.showModal();
+  });
+}
+
+// Cancelar (vai para "Canceladas", dá para reativar) ou excluir (apaga de vez, inclusive da nuvem).
+async function tripAction(t, action) {
+  const name = t.name || t.destination || 'esta viagem';
+  if (action === 'cancel') {
+    if (!await confirmDialog({ title: `Cancelar "${name}"?`, message: 'Ela sai da lista principal e fica na aba "Canceladas", com tudo guardado. Você pode reativar quando quiser.', confirmLabel: 'Cancelar viagem', danger: true })) return false;
+    t.cancelled = true;
+    t.cancelledAt = new Date().toISOString();
+    save();
+    toast(`"${name}" foi para Canceladas.`, 'ok');
+    return true;
+  }
+  if (action === 'restore') {
+    t.cancelled = false;
+    delete t.cancelledAt;
+    save();
+    toast(`"${name}" voltou para as viagens ativas.`, 'ok');
+    return true;
+  }
+  if (action === 'delete') {
+    if (!await confirmDialog({ title: `Excluir "${name}" definitivamente?`, message: 'Apaga a viagem com reservas, roteiro e gastos, também da nuvem. Não dá para desfazer. Se quiser guardar uma cópia, exporte um backup antes.', confirmLabel: 'Excluir para sempre', danger: true })) return false;
+    store.data.trips = store.data.trips.filter((x) => x !== t);
+    save();
+    toast(`"${name}" foi excluída.`, 'ok');
+    return true;
+  }
+  return false;
 }
 
 // Aviso de carregamento sobre o mapa ("Procurando no mapa…", "Calculando rotas…").
@@ -182,15 +264,22 @@ window.addEventListener('auth-required', () => {
 window.addEventListener('hashchange', route);
 onSync(renderSync);
 
+const EYE = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
+const EYE_OFF = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3 3l18 18M10.6 5.1A10.8 10.8 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.2M6.6 6.6C3.9 8.3 2 12 2 12s3.6 7 10 7a9.9 9.9 0 0 0 4.4-1M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
+
 function renderLogin(error = '') {
   app.dataset.view = 'login';
   app.innerHTML = `
     <div class="center-screen login-screen">
+      <div class="login-theme">${themeButton()}</div>
       <form class="login" data-form="login">
         <div class="login-mark" aria-hidden="true">✈</div>
         <h1>Meu Roteiro</h1>
         <p>Seu planejador de viagens.</p>
-        <input type="password" name="pw" placeholder="Senha do app" autocomplete="current-password" required autofocus>
+        <div class="pw-wrap">
+          <input type="password" name="pw" id="pw" placeholder="Senha do app" autocomplete="current-password" required autofocus>
+          <button type="button" class="pw-eye" data-action="toggle-pw" aria-label="Mostrar senha" aria-pressed="false" aria-controls="pw" title="Mostrar senha">${EYE}</button>
+        </div>
         ${error ? `<p class="error">${h(error)}</p>` : ''}
         <button class="btn primary" type="submit">Entrar</button>
       </form>
@@ -254,8 +343,12 @@ function passHtml({ from, to, fromSub, toSub, metaLeft, metaRight, stubLabel, st
 function renderHome() {
   app.dataset.view = 'home';
   const today = localToday();
-  const trips = [...store.data.trips].sort((a, b) => (a.startDate || '9').localeCompare(b.startDate || '9'));
-  const next = trips.find((t) => t.endDate && t.endDate >= today) || null;
+  const all = [...store.data.trips].sort((a, b) => (a.startDate || '9').localeCompare(b.startDate || '9'));
+  const active = all.filter((t) => !t.cancelled);
+  const cancelled = all.filter((t) => t.cancelled);
+  if (!cancelled.length) ui.homeTab = 'ativas';
+  const trips = ui.homeTab === 'canceladas' ? cancelled : active;
+  const next = active.find((t) => t.endDate && t.endDate >= today) || null;
   const f = ui.features;
 
   let hero;
@@ -284,31 +377,48 @@ function renderHome() {
     <header class="home-hero">
       <div class="home-top">
         <span class="brand"><span class="brand-mark" aria-hidden="true">✈</span> Meu Roteiro</span>
-        <span id="sync" class="sync"></span>
+        <span class="top-actions"><span id="sync" class="sync"></span>${themeButton()}</span>
       </div>
       ${hero}
     </header>
     <main class="home">
-      ${trips.length ? `
+      ${all.length ? `
       <section>
-        <h2 class="section-h">Minhas viagens</h2>
+        <div class="section-head">
+          <h2 class="section-h">Minhas viagens</h2>
+          ${cancelled.length ? `
+          <div class="seg" role="tablist" aria-label="Filtrar viagens">
+            <button class="${ui.homeTab === 'ativas' ? 'active' : ''}" data-action="home-tab" data-tab="ativas" role="tab" aria-selected="${ui.homeTab === 'ativas'}">Ativas <span>${active.length}</span></button>
+            <button class="${ui.homeTab === 'canceladas' ? 'active' : ''}" data-action="home-tab" data-tab="canceladas" role="tab" aria-selected="${ui.homeTab === 'canceladas'}">Canceladas <span>${cancelled.length}</span></button>
+          </div>` : ''}
+        </div>
+        ${!trips.length ? `<p class="muted">${ui.homeTab === 'canceladas' ? 'Nenhuma viagem cancelada.' : 'Nenhuma viagem ativa. Crie uma abaixo ou reative uma cancelada.'}</p>` : ''}
         <div class="trip-grid">
           ${trips.map((t) => {
             const s = tripSummary(t);
             const past = t.endDate && t.endDate < today;
             return `
-            <a class="ticket ${past ? 'past' : ''}" href="#/t/${t.id}/roteiro">
+            <div class="ticket ${past ? 'past' : ''} ${t.cancelled ? 'cancelled' : ''}">
               <div class="ticket-main">
-                <b>${h(t.name || t.destination || 'Viagem')}</b>
+                <a class="ticket-link" href="#/t/${t.id}/roteiro"><b>${h(t.name || t.destination || 'Viagem')}</b></a>
                 <span>${h(t.destination)}</span>
                 <span class="muted small">${dateRange(t)}</span>
+                ${t.cancelled
+                  ? `<div class="ticket-actions">
+                      <button class="btn small" data-action="trip-restore" data-id="${t.id}">Reativar</button>
+                      <button class="btn small danger-outline" data-action="trip-delete" data-id="${t.id}">Excluir</button>
+                    </div>`
+                  : ''}
+                  ${t.cancelled ? '' : `<button class="ticket-menu" data-action="trip-menu" data-id="${t.id}" aria-label="Opções de ${h(t.name || 'viagem')}" title="Cancelar ou excluir">⋯</button>`}
               </div>
               <div class="ticket-stub">
-                <span class="small">${past ? 'Gasto' : 'Previsto'}</span>
-                <b>${money(past ? s.spent : s.planned, t.currency)}</b>
-                <span class="small">${h(countdown(t))}</span>
+                ${t.cancelled
+                  ? `<span class="small">Cancelada</span><b>${t.cancelledAt ? fmtDate(t.cancelledAt.slice(0, 10), false) : ''}</b>`
+                  : `<span class="small">${past ? 'Gasto' : 'Previsto'}</span>
+                     <b>${money(past ? s.spent : s.planned, t.currency)}</b>
+                     <span class="small">${h(countdown(t))}</span>`}
               </div>
-            </a>`;
+            </div>`;
           }).join('')}
         </div>
       </section>` : ''}
@@ -328,6 +438,7 @@ function renderHome() {
 
       <section class="card">
         <h2>Configuração</h2>
+        <div class="setting-row"><span>Tema</span>${themeSeg()}</div>
         <div class="chips">
           <span class="chip ${f.routes ? 'on' : 'off'}">${f.routes ? '✓' : '○'} Rotas reais${f.routes ? '' : ' (usando estimativa)'}</span>
           <span class="chip ${f.cloud ? 'on' : 'off'}">${f.cloud ? '✓' : '○'} Sincronização na nuvem</span>
@@ -366,6 +477,7 @@ function renderTrip() {
         <div class="title" id="trip-title"></div>
         <span id="countdown" class="countdown"></span>
         <span id="sync" class="sync"></span>
+        ${themeButton()}
       </header>
       <nav class="tabs" id="tabs" aria-label="Seções da viagem"></nav>
       <main class="trip-layout" id="layout">
@@ -406,7 +518,9 @@ function renderPanel() {
   }
   const activeBind = document.activeElement?.dataset?.bind;
   const html = { roteiro: panelRoteiro, gastos: panelGastos, reservas: panelReservas, resumo: panelResumo }[ui.tab](t);
-  panel.innerHTML = (ui.pick ? pickBanner() : '') + html;
+  const cancelledBanner = t.cancelled ? `<div class="cancel-banner" role="status">Esta viagem está cancelada.
+    <button class="btn small" data-action="trip-restore" data-id="${t.id}">Reativar</button></div>` : '';
+  panel.innerHTML = (ui.pick ? pickBanner() : '') + cancelledBanner + html;
   if (activeBind) panel.querySelector(`[data-bind="${CSS.escape(activeBind)}"]`)?.focus();
   updateMap();
   // calcula (com cache) as rotas que estão faltando para o que está na tela
@@ -1167,6 +1281,17 @@ function panelReservas(t) {
       <div class="section-head"><h2 class="section-h">Aluguel de carro</h2><button class="btn small" data-action="add-car">＋ Carro</button></div>
       ${t.cars.length ? '' : '<p class="muted small">Nenhum carro cadastrado. Nos dias com carro, as rotas são calculadas de carro e o combustível é estimado pela distância.</p>'}
       ${t.cars.map((c) => carCard(t, c)).join('')}
+    </section>
+
+    <section class="card manage">
+      <h2>Gerenciar viagem</h2>
+      <p class="muted small">Cancelar tira a viagem da lista principal, mas guarda tudo na aba "Canceladas". Excluir apaga de vez.</p>
+      <div class="row wrap">
+        ${t.cancelled
+          ? `<button class="btn" data-action="trip-restore" data-id="${t.id}">Reativar viagem</button>`
+          : `<button class="btn danger-outline" data-action="trip-cancel" data-id="${t.id}">Cancelar viagem</button>`}
+        <button class="btn danger-outline" data-action="trip-delete" data-id="${t.id}">Excluir viagem</button>
+      </div>
     </section>`;
 }
 
@@ -1569,6 +1694,51 @@ document.addEventListener('click', async (e) => {
         for (let i = 0; i < tripDays(t).length; i++) await ensureRoute(t, i);
       });
 
+    case 'theme':
+      return applyTheme(el.dataset.next);
+    case 'toggle-pw': {
+      const input = document.getElementById('pw');
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      el.innerHTML = show ? EYE_OFF : EYE;
+      el.setAttribute('aria-pressed', show);
+      el.setAttribute('aria-label', show ? 'Ocultar senha' : 'Mostrar senha');
+      el.title = show ? 'Ocultar senha' : 'Mostrar senha';
+      input.focus();
+      return;
+    }
+    case 'home-tab':
+      ui.homeTab = el.dataset.tab;
+      return renderHome();
+    case 'trip-menu': {
+      const tr = getTrip(el.dataset.id);
+      if (!tr) return;
+      const choice = await choiceDialog({
+        title: tr.name || tr.destination || 'Viagem',
+        choices: [
+          { value: 'open', label: 'Abrir viagem', cls: 'primary' },
+          { value: 'cancel', label: 'Cancelar viagem', hint: 'Vai para a aba Canceladas; dá para reativar.' },
+          { value: 'delete', label: 'Excluir definitivamente', hint: 'Apaga tudo, também da nuvem.', cls: 'danger-outline' },
+        ],
+      });
+      if (choice === 'open') location.hash = `#/t/${tr.id}/roteiro`;
+      else if (choice && await tripAction(tr, choice)) renderHome();
+      return;
+    }
+    case 'trip-cancel':
+    case 'trip-restore':
+    case 'trip-delete': {
+      const tr = getTrip(el.dataset.id);
+      if (!tr) return;
+      const done = await tripAction(tr, action.replace('trip-', ''));
+      if (!done) return;
+      if (ui.tripId) {
+        if (action === 'trip-restore') return renderPanel();
+        ui.homeTab = action === 'trip-cancel' ? 'canceladas' : ui.homeTab;
+        location.hash = '#/';
+      } else renderHome();
+      return;
+    }
     case 'km-mode':
       ui.kmMode = !ui.kmMode;
       savePref('roteiro:kmMode', ui.kmMode ? '1' : '0');
