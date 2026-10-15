@@ -4,8 +4,9 @@ import {
   sumAmount, tripSummary, newTrip, flightLeg, carRental, carKm, computedDailies, LEG_CATS, flightKm, flightEnds,
   greatCircle, dayKm, pickupAfterFlight, returnBeforeFlight, haversineKm, MEALS, PRICE_TAGS, FOOD_STYLES,
   mealPlan, placeCost, DURATIONS, fmtDuration, isActive, act, groupOf, currentChoices, applyChoices, sameChoices, simulate,
-  ensurePackages, activePackage, switchPackage, clonePackageData, packageCost, packageData,
+  ensurePackages, activePackage, switchPackage, clonePackageData, packageCost, packageData, nightStay, morningStay,
 } from './util.js';
+import { forecastAt, fetchForecast, inRange } from './weather.js';
 import { api, getPassword, setPassword, geocode, getRoute, forgetEstimates } from './api.js';
 import { store, loadData, loadOffline, save, getTrip, onSync, replaceAll } from './store.js';
 import { mountMap, drawMap, refreshSize, setPicking } from './map.js';
@@ -34,6 +35,7 @@ const ui = {
   layers: loadLayers(), // camadas visíveis no mapa
   kmMode: loadPref('roteiro:kmMode') === '1', // mostra os km entre cada etapa do dia
   attrOpen: new Set(), // checklists de atrações abertos
+  resTab: ['passeios', 'restaurantes'].includes(loadPref('roteiro:resTab')) ? loadPref('roteiro:resTab') : 'custos', // abas do Resumo
   autoRoutes: loadPref('roteiro:autoRoutes') !== '0', // consulta rotas novas sozinho (com espera)
   editOpt: null, // opção de restaurante sendo editada no bloco Refeições
   homeTab: 'ativas', // 'ativas' | 'canceladas'
@@ -303,7 +305,9 @@ function route() {
     const t = getTrip(m[1]);
     if (ui.tripId !== m[1]) {
       ui.tripId = m[1];
-      ui.day = 'all';
+      // durante a viagem, o roteiro já abre no dia de hoje
+      const ti = tripDays(t).indexOf(localToday());
+      ui.day = ti >= 0 ? ti : 'all';
       ui.np = freshNewPlace();
       ui.open.clear();
       const days = tripDays(t);
@@ -536,9 +540,102 @@ function renderPanel() {
   keepChipInView(panel.querySelector('.day-chips'), chipsScroll);
   if (activeBind) panel.querySelector(`[data-bind="${CSS.escape(activeBind)}"]`)?.focus();
   updateMap();
+  if (ui.tab === 'roteiro') ensureWeather(t);
   // rotas: o que já está salvo aparece na hora; o que falta é consultado depois de uma pausa
   if (ui.tab === 'roteiro' && ui.day !== 'all') scheduleRoutes(t, [ui.day]);
   else if (ui.tab !== 'gastos') scheduleRoutes(t, tripDays(t).map((_, i) => i));
+}
+
+// ---------------------------------------------------------------- tempo (Open-Meteo)
+// Local da previsão de cada dia: hotel da noite (ou da manhã) e, sem hotel, o destino.
+function dayPos(t, i) {
+  const date = tripDays(t)[i];
+  const st = nightStay(t, date) || morningStay(t, date);
+  if (st && hasPos(st)) return { lat: st.lat, lng: st.lng };
+  return hasPos(t.center) ? t.center : null;
+}
+function dayWeather(t, i) {
+  const date = tripDays(t)[i];
+  return date && inRange(date, localToday()) ? forecastAt(dayPos(t, i), date) : null;
+}
+const tempTxt = (v) => (Number.isFinite(v) ? `${Math.round(v)}°` : '–');
+function wxChip(t, i, big = false) {
+  const w = dayWeather(t, i);
+  if (!w) return '';
+  const rain = Number.isFinite(w.rain) && w.rain >= 10 ? ` · 💧${Math.round(w.rain)}%` : '';
+  return `<span class="wx ${big ? 'wx-big' : ''} ${w.rain >= 60 ? 'wx-rain' : ''}" title="${h(w.label)}${Number.isFinite(w.rain) ? ` · chance de chuva ${Math.round(w.rain)}%` : ''}"><span aria-hidden="true">${w.icon}</span> ${tempTxt(w.max)}<small>/${tempTxt(w.min)}</small>${rain}</span>`;
+}
+// Busca a previsão dos locais da viagem (uma consulta por local, com cache de 3 h).
+let wxAsked = '';
+function ensureWeather(t) {
+  const today = localToday();
+  const days = tripDays(t);
+  const locs = new Map();
+  days.forEach((d, i) => { if (inRange(d, today)) { const pos = dayPos(t, i); if (pos) locs.set(`${pos.lat.toFixed(2)},${pos.lng.toFixed(2)}`, pos); } });
+  const sig = `${t.id}|${[...locs.keys()].join(';')}|${today}`;
+  if (!locs.size || sig === wxAsked) return;
+  wxAsked = sig;
+  Promise.all([...locs.values()].map(fetchForecast)).then((news) => {
+    if (news.some(Boolean) && ui.tripId === t.id && ui.tab === 'roteiro' && !document.activeElement?.matches?.('input, textarea')) renderPanel();
+  });
+}
+
+// ---------------------------------------------------------------- modo "Hoje"
+// Link de navegação até um ponto (Google Maps: funciona no app do celular e no navegador).
+const GMAPS_MODE = { foot: 'walking', bike: 'bicycling', rental: 'driving', drive: 'driving', transfer: 'driving' };
+const navLinks = (pt, cat) => {
+  const ll = `${pt.lat},${pt.lng}`;
+  const car = !['foot', 'bike'].includes(cat);
+  return `<a class="btn primary small" href="https://www.google.com/maps/dir/?api=1&destination=${ll}&travelmode=${GMAPS_MODE[cat] || 'driving'}" target="_blank" rel="noopener">🧭 Ir com Google Maps</a>
+    ${car ? `<a class="btn small" href="https://waze.com/ul?ll=${ll}&navigate=yes" target="_blank" rel="noopener">Waze</a>` : ''}`;
+};
+function todayCard(t, i) {
+  const rf = routeFor(t, i);
+  const ps = dayPlaces(t, i);
+  const pd = plannedDay(t, i);
+  const spent = sumAmount(spentOn(t, tripDays(t)[i]));
+  const pct = pd.total > 0 ? Math.min(100, (spent / pd.total) * 100) : 0;
+  const next = ps.find((p) => !p.done);
+  // trecho que chega à próxima parada (para escolher a pé / carro no link)
+  const legCat = (owner) => { const k = rf.owners.findIndex((o) => o.includes(owner)); return k > 0 ? rf.legs[k - 1]?.cat : 'drive'; };
+  const end = rf.end && hasPos(rf.end) ? rf.end : null;
+  let nextHtml;
+  if (next) {
+    const leg = rf.route && (() => { const k = rf.owners.findIndex((o) => o.includes(next.id)); return k > 0 ? rf.route.legs[k - 1] : null; })();
+    nextHtml = `
+      <div class="today-next">
+        <div class="muted small">Próxima parada</div>
+        <div class="today-name">${catIcon(next.category)} ${h(next.name)}</div>
+        <div class="muted small">${[next.time ? `🕒 ${h(next.time)}` : '', next.duration ? `⏱️ ${fmtDuration(next.duration)}` : '', leg ? `${LEG_CATS[legCat(next.id)]?.icon || ''} ${dur(leg.duration)} · ${km(leg.distance)} até lá` : ''].filter(Boolean).join(' · ')}</div>
+        <div class="row wrap today-actions">
+          ${hasPos(next) ? navLinks(next, legCat(next.id)) : '<span class="warn small">Sem posição no mapa</span>'}
+          <button class="btn small" data-action="today-done" data-id="${next.id}">✓ Feito</button>
+        </div>
+      </div>`;
+  } else if (ps.length) {
+    nextHtml = `<div class="today-next"><div class="today-name">🎉 Tudo feito por hoje!</div>
+      ${end ? `<div class="row wrap today-actions">${navLinks(end, legCat('end'))}<span class="muted small">Voltar para ${h(end.name)}</span></div>` : ''}</div>`;
+  } else {
+    nextHtml = '<div class="today-next"><div class="muted">Nenhuma parada hoje. Dia livre!</div></div>';
+  }
+  return `
+    <section class="today-card" aria-label="Hoje">
+      <div class="today-head">
+        <div><span class="today-kicker">Hoje</span> <b>Dia ${i + 1}</b> <span class="muted small">${WEEKDAYS[new Date(`${tripDays(t)[i]}T12:00`).getDay()]}</span></div>
+        ${wxChip(t, i, true)}
+      </div>
+      ${nextHtml}
+      ${ps.length > 1 ? `<ol class="today-list">${ps.map((p) => `
+        <li class="${p.done ? 'done' : ''} ${p === next ? 'is-next' : ''}">
+          <button class="today-check" data-action="today-done" data-id="${p.id}" aria-pressed="${!!p.done}" aria-label="${p.done ? 'Desmarcar' : 'Marcar como feito'}: ${h(p.name)}">${p.done ? '✓' : ''}</button>
+          <span class="grow ellipsis">${h(p.name)}</span><span class="muted small">${h(p.time || '')}</span>
+        </li>`).join('')}</ol>` : ''}
+      <div class="today-money">
+        <div class="row"><span class="grow small">Gasto hoje <b>${money(spent, t.currency)}</b> de ${money(pd.total, t.currency)} previsto</span>
+          <a class="btn small" href="#/t/${t.id}/gastos">＋ Gasto</a></div>
+        <div class="bar thin ${spent > pd.total ? 'over' : ''}"><div style="width:${pct}%"></div></div>
+      </div>
+    </section>`;
 }
 
 // Fileira de dias: ao redesenhar, mantém a rolagem onde estava e traz o dia escolhido
@@ -1039,7 +1136,7 @@ function panelRoteiro(t) {
           <span class="day-body">
             <span class="day-card-head">
               <span>${WEEKDAYS[new Date(`${d}T12:00`).getDay()]}${car ? ' <span class="tag">🚗 com carro</span>' : ''}</span>
-              <span class="muted small">${ps.length} parada${ps.length === 1 ? '' : 's'}</span>
+              <span class="muted small">${wxChip(t, i)} ${ps.length} parada${ps.length === 1 ? '' : 's'}</span>
             </span>
             ${flights.map((f) => `<span class="small">✈️ ${h(f.from)} → ${h(f.to)} ${f.depart?.startsWith(d) ? `sai ${fmtTime(f.depart)}` : `chega ${fmtTime(f.arrive)}`}${flightKm(f) ? ` <span class="muted">· ${kmFmt(flightKm(f))}</span>` : ''}</span>`).join('')}
             ${car?.pickupAt?.startsWith(d) ? `<span class="small">🔑 Retirada do carro ${fmtTime(car.pickupAt)}</span>` : ''}
@@ -1097,7 +1194,7 @@ function panelRoteiro(t) {
               <span class="num" style="--c:${dayColor(i)}">${k + 1}</span>
               <div class="grow">
                 <b>${h(p.name)}</b>
-                <div class="muted small">${placeMeta(p)}</div>
+                <div class="muted small">${placeMeta(p)}${p.done ? ' · <span class="ok">✓ feito</span>' : ''}</div>
                 ${p.category === 'comida' ? `<div class="flags">${p.meal ? `<span class="flag flag-meal">${MEAL_LABELS[p.meal]}</span>` : ''}${foodTags(p)}</div>` : ''}
               </div>
               ${odometer(rf, p.id)}
@@ -1132,6 +1229,7 @@ function panelRoteiro(t) {
         <div>
           <h2>Dia ${i + 1}</h2>
           <span class="muted">${fmtDate(date)}${car ? ` · 🚗 ${h(car.company || 'carro alugado')}` : ''}</span>
+          ${wxChip(t, i, true)}
         </div>
         <div class="stats">
           ${rf.route ? `<b>${km(rf.route.distance)}</b> · ${dur(rf.route.duration)}${rf.route.source === 'estimate' ? ' <span class="muted" title="Estimativa em linha reta">(estimado)</span>' : ''}` : rf.points.length > 1 ? (ui.autoRoutes ? '<span class="muted"><span class="spin-sm"></span> calculando rota</span>' : '<span class="muted">rota não calculada</span>') : ''}
@@ -1161,7 +1259,9 @@ function panelRoteiro(t) {
         </div>`).join('')}
     </div>` : (t.places.length || ui.np.open ? '' : '<div class="empty card">Ainda não há lugares. Toque em "＋ Lugar" para adicionar praias, passeios e restaurantes.</div>');
 
-  return dayChips + toolbar + body + unplannedHtml;
+  const ti = days.indexOf(localToday());
+  const today = ti >= 0 && (ui.day === 'all' || ui.day === ti) ? todayCard(t, ti) : '';
+  return dayChips + today + toolbar + body + unplannedHtml;
 }
 
 // Busca as rotas do dia (com cache): trechos seguidos do mesmo tipo viram uma consulta.
@@ -1621,7 +1721,91 @@ async function locateDest(t) {
 }
 
 // ---------------------------------------------------------------- aba Resumo
+// Passeios e restaurantes que entraram no roteiro (restaurantes: só os escolhidos/no roteiro)
+function chosenPlaces(t, kind) {
+  const out = [];
+  tripDays(t).forEach((d, i) => dayPlaces(t, i).forEach((p) => {
+    if ((p.category === 'comida') === (kind === 'restaurantes')) out.push({ p, i, date: d });
+  }));
+  return out;
+}
+function resumoTabs(t) {
+  const nT = chosenPlaces(t, 'passeios').length, nR = chosenPlaces(t, 'restaurantes').length;
+  return `<div class="seg res-tabs" role="tablist" aria-label="Resumo">
+    ${[['custos', '📊 Custos', ''], ['passeios', '📍 Passeios', nT], ['restaurantes', '🍽️ Restaurantes', nR]].map(([k, l, n]) =>
+      `<button class="${ui.resTab === k ? 'active' : ''}" data-action="res-tab" data-tab="${k}" role="tab" aria-selected="${ui.resTab === k}">${l}${n !== '' ? `<span>${n}</span>` : ''}</button>`).join('')}
+  </div>`;
+}
+function placesSummary(t, kind) {
+  const list = chosenPlaces(t, kind);
+  const c = t.currency, n = Math.max(1, num(t.travelers));
+  const food = kind === 'restaurantes';
+  const total = list.reduce((a, x) => a + placeCost(t, x.p), 0);
+  const unscheduled = t.places.filter((p) => isActive(p) && (p.category === 'comida') === food && !p.meal && (p.day == null || p.day >= tripDays(t).length)).length;
+  if (!list.length) {
+    return `<div class="empty card">${food ? 'Nenhum restaurante escolhido ainda. Escolha as opções de almoço e jantar no Roteiro (círculo ao lado da opção).' : 'Nenhum passeio no roteiro ainda. Adicione em Roteiro → "＋ Lugar".'}</div>`;
+  }
+  let head;
+  if (food) {
+    const byPrice = Object.entries(PRICE_TAGS).map(([k, l]) => [l, list.filter((x) => x.p.price === k).length]).filter(([, v]) => v);
+    const meals = list.filter((x) => x.p.meal).length;
+    head = `
+      <div class="totals">
+        <div><div class="muted small">Restaurantes</div><div class="big">${list.length}</div><div class="muted small">${meals} refeiç${meals === 1 ? 'ão' : 'ões'} escolhida${meals === 1 ? '' : 's'}</div></div>
+        <div><div class="muted small">Previsto</div><div class="big">${money(total, c)}</div><div class="muted small">${money(total / list.length / n, c)} por pessoa/refeição</div></div>
+      </div>
+      ${byPrice.length ? `<div class="chips">${byPrice.map(([l, v]) => `<span class="chip">${l} · ${v}</span>`).join('')}</div>` : ''}`;
+  } else {
+    const minutes = list.reduce((a, x) => a + num(x.p.duration), 0);
+    const fav = list.reduce((a, x) => a + attractionTotals(x.p).fav, 0);
+    head = `
+      <div class="totals">
+        <div><div class="muted small">Passeios</div><div class="big">${list.length}</div><div class="muted small">${minutes ? `⏱️ ${fmtDuration(minutes)} no total` : 'sem duração definida'}</div></div>
+        <div><div class="muted small">Previsto</div><div class="big">${money(total, c)}</div><div class="muted small">${fav ? `⭐ ${fav} atraç${fav === 1 ? 'ão' : 'ões'} marcada${fav === 1 ? '' : 's'}` : n > 1 ? `${money(total / n, c)} por pessoa` : ''}</div></div>
+      </div>`;
+  }
+  let k = 0;
+  const byDay = new Map();
+  for (const x of list) { if (!byDay.has(x.i)) byDay.set(x.i, []); byDay.get(x.i).push(x); }
+  const item = ({ p, i }) => {
+    const num1 = ++k;
+    const cost = placeCost(t, p);
+    const at = attractionTotals(p);
+    const meta = food
+      ? [p.meal ? MEAL_LABELS[p.meal] : (p.time ? `🕒 ${h(p.time)}` : 'Outra'), num(p.costPP) ? `${money(p.costPP, c)}/pessoa` : ''].filter(Boolean).join(' · ')
+      : [p.time ? `🕒 ${h(p.time)}` : '', p.duration ? `⏱️ ${fmtDuration(p.duration)}` : '', at.count ? `🎟️ ${at.count} atraç${at.count === 1 ? 'ão' : 'ões'}${at.fav ? ` · ⭐ ${at.done}/${at.fav}` : ''}` : ''].filter(Boolean).join(' · ');
+    return `
+      <li class="sum-item ${p.done ? 'done' : ''}">
+        <span class="num" style="--c:${dayColor(i)}">${num1}</span>
+        <div class="grow">
+          <b>${h(p.name)}</b>${p.done ? ' <span class="ok small">✓ feito</span>' : ''}
+          <div class="muted small">${meta || placeMeta(p)}</div>
+          ${food ? `<div class="flags">${foodTags(p)}</div>` : ''}
+          ${p.note ? `<div class="small sum-note">${h(p.note)}</div>` : ''}
+        </div>
+        <div class="sum-side">
+          ${cost ? `<b>${money(cost, c)}</b>` : '<span class="muted small">—</span>'}
+          <button class="link small" data-action="go-day" data-day="${i}">Ver no dia</button>
+        </div>
+      </li>`;
+  };
+  return `
+    <section class="card total">${head}</section>
+    ${[...byDay.entries()].map(([i, xs]) => `
+      <section class="sum-day">
+        <h3 class="sum-day-h" style="--c:${dayColor(i)}"><span class="dot"></span>Dia ${i + 1} <span class="muted small">${fmtDate(tripDays(t)[i])}</span>${wxChip(t, i)}</h3>
+        <ol class="sum-list">${xs.map(item).join('')}</ol>
+      </section>`).join('')}
+    ${unscheduled ? `<p class="muted small">${unscheduled} ${food ? 'restaurante(s)' : 'passeio(s)'} ainda sem dia não aparece(m) aqui.</p>` : ''}
+    <p class="muted small">${food ? 'Só os restaurantes que entraram no roteiro: as opções escolhidas de almoço/jantar e os restaurantes adicionados direto em um dia.' : 'Passeios ativos do roteiro (alternativas não escolhidas ficam de fora).'} O mapa mostra só estes lugares.</p>`;
+}
+
 function panelResumo(t) {
+  if (ui.resTab !== 'custos') return resumoTabs(t) + placesSummary(t, ui.resTab);
+  return resumoTabs(t) + panelResumoCustos(t);
+}
+
+function panelResumoCustos(t) {
   const s = tripSummary(t);
   const n = Math.max(1, num(t.travelers));
   const c = t.currency;
@@ -1834,7 +2018,13 @@ function updateMap() {
     }
   };
 
-  if (ui.tab === 'roteiro' && ui.day !== 'all') {
+  if (ui.tab === 'resumo' && ui.resTab !== 'custos') {
+    // Resumo → Passeios / Restaurantes: só esses lugares, numerados como na lista, sem rotas
+    fitKey += `|${ui.resTab}`;
+    chosenPlaces(t, ui.resTab).forEach(({ p, i }, k) => {
+      if (hasPos(p)) markers.push({ lat: p.lat, lng: p.lng, label: k + 1, color: dayColor(i), z: 1000, cls: ui.resTab === 'restaurantes' ? 'food' : '', popup: placePopup(p, `<br>Dia ${i + 1}${p.time ? ` · ${h(p.time)}` : ''}`) });
+    });
+  } else if (ui.tab === 'roteiro' && ui.day !== 'all') {
     const i = ui.day;
     const date = days[i];
     let n = 0;
@@ -2086,6 +2276,23 @@ document.addEventListener('click', async (e) => {
       save();
       return renderPanel();
     }
+    case 'today-done': {
+      const p = t.places.find((x) => x.id === el.dataset.id);
+      if (!p) return;
+      p.done = !p.done;
+      if (!p.done) delete p.done;
+      save();
+      if (p.done) toast(`✓ ${p.name}`, 'ok');
+      return renderPanel();
+    }
+    case 'res-tab':
+      ui.resTab = el.dataset.tab;
+      savePref('roteiro:resTab', ui.resTab);
+      return renderPanel();
+    case 'go-day':
+      ui.day = Number(el.dataset.day);
+      location.hash = `#/t/${t.id}/roteiro`;
+      return;
     case 'attr-open': {
       const p = t.places.find((x) => x.id === el.dataset.id);
       if (p) attractionsDialog(t, p);

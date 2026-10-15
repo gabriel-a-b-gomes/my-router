@@ -75,6 +75,26 @@ Cada passeio tem **duração esperada** (30 min até o dia inteiro). O dia mostr
 **Atrações do passeio:** no cartão do passeio, toque em **🎟️ Atrações** para abrir a lista com o nome e o preço por pessoa de cada atração (preço vazio = não sei; 0 = grátis). Toque na **⭐** nas que mais te interessam. O modal mostra a soma das ⭐ por pessoa e para o grupo, e o botão **Usar ⭐ como custo do passeio** coloca essa soma no custo.
 No cartão, as ⭐ viram um **checklist recolhido** ("⭐ Quero ver 1/3"): toque para abrir e marque o que já visitou.
 
+### Modo "Hoje" (durante a viagem)
+Nos dias da viagem, o Roteiro já abre no **dia de hoje** com um cartão de destaque:
+- **Próxima parada**, com horário, duração e o tempo de deslocamento até lá.
+- **🧭 Ir com Google Maps** (e **Waze** nos trechos de carro): abre a navegação já no modo do trecho (a pé, bike ou carro).
+- **✓ Feito**: marca a parada como concluída e passa para a próxima. A lista do dia mostra o que já foi feito.
+- **Gasto hoje × previsto do dia**, com atalho para lançar um gasto.
+
+### Previsão do tempo
+Cada dia mostra ícone, máxima/mínima e chance de chuva (quando passa de 10%) para o local do hotel daquela noite (ou o destino). Aparece no cartão Hoje, no topo do dia, nos cartões da visão geral e no Resumo.
+- Vem do **Open-Meteo**: grátis e sem cadastro. O navegador consulta direto, sem passar pelo servidor.
+- A previsão cobre até **16 dias à frente**. Dias mais distantes ficam sem previsão até a data chegar perto.
+- Fica guardada no aparelho por 3 horas (uma consulta por local).
+
+### Resumo: Passeios e Restaurantes
+No Resumo há três abas: **Custos** (o resumo de antes), **Passeios** e **Restaurantes**.
+- **Passeios:** todos os passeios do roteiro por dia, com horário, duração, custo e atrações ⭐. No topo, a quantidade, as horas totais e o custo previsto.
+- **Restaurantes:** só os que **entraram no roteiro** (as opções escolhidas de almoço/jantar e os restaurantes adicionados direto em um dia), com refeição, faixa de preço, estilo e custo. No topo, o total e a média por pessoa por refeição.
+- Nessas duas abas o **mapa mostra só esses lugares**, numerados como na lista e sem rotas, para dar destaque.
+- **Ver no dia** leva para o dia do lugar no Roteiro. A aba escolhida fica lembrada.
+
 ### Como chegar em cada parada (trecho a trecho)
 Entre uma parada e outra, na visão do dia, há um seletor **Como chegar**: **Auto**, 🚶 A pé, 🚲 Bike, 🚗 Carro (alugado, nos dias com carro, ou carro/app) e 🚐 Táxi/traslado.
 - **Auto** segue a regra do dia: carro alugado entre a retirada e a devolução, traslado de/para o aeroporto, e o "Deslocamento" da viagem nos dias sem carro.
@@ -164,6 +184,7 @@ Outros recursos:
 | OpenStreetMap (Nominatim/Photon) | Buscar endereços e lugares pelo nome | Não |
 | OpenStreetMap | Imagens do mapa | Não |
 | OpenRouteService | Rotas reais a pé, de carro e de bicicleta (2.000/dia) | Sim (grátis), **opcional** |
+| Open-Meteo | Previsão do tempo por dia (até 16 dias) | Não |
 | OSRM da FOSSGIS (routing.openstreetmap.de) | Rotas de reserva quando o ORS falha ou não está configurado (uso leve, 1 consulta/s) | Não |
 | Supabase | Sincronizar computador ↔ celular | Sim (grátis), **opcional** |
 

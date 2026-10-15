@@ -1,8 +1,8 @@
 // Service worker: permite instalar o app e abrir o roteiro mesmo sem internet
 // (mostra a última versão salva). As chamadas /api nunca são guardadas em cache.
-const CACHE = 'roteiro-v15';
+const CACHE = 'roteiro-v16';
 const SHELL = [
-  '/', '/index.html', '/css/app.css', '/js/app.js', '/js/util.js', '/js/api.js', '/js/store.js', '/js/map.js',
+  '/', '/index.html', '/css/app.css', '/js/app.js', '/js/util.js', '/js/api.js', '/js/store.js', '/js/map.js', '/js/weather.js',
   '/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css', '/manifest.webmanifest', '/icons/icon-192.png',
 ];
 

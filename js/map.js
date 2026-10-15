@@ -66,7 +66,8 @@ export function drawMap({ markers = [], lines = [], center = null, fit = true })
     if (!m.nofit) bounds.push([m.lat, m.lng]);
   }
   if (!fit) return;
-  if (bounds.length > 1) map.fitBounds(bounds, { padding: [36, 36], maxZoom: 16, animate: false });
+  // margem maior em cima (botões de camadas) e embaixo (botões do celular), para nenhum pino ficar escondido
+  if (bounds.length > 1) map.fitBounds(bounds, { paddingTopLeft: [36, 64], paddingBottomRight: [36, 72], maxZoom: 16, animate: false });
   else if (bounds.length === 1) map.setView(bounds[0], 15, { animate: false });
   else if (center) map.setView([center.lat, center.lng], 12, { animate: false });
 }
