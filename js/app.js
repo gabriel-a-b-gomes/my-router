@@ -944,20 +944,41 @@ function mealsBlock(t, i, rf) {
             <button class="btn small" data-action="meal-add" data-day="${i}" data-meal="${m}">＋ Opção</button>
           </div>
           ${plan.opts.length ? `<ul class="meal-opts">${plan.opts.map((p) => `
-            <li class="meal-opt ${p.chosen ? 'chosen' : ''}">
+            <li class="meal-opt ${p.chosen ? 'chosen' : ''} ${ui.editOpt === p.id ? 'editing' : ''}">
               <button class="choose" data-action="meal-choose" data-id="${p.id}" role="radio" aria-checked="${!!p.chosen}" title="${p.chosen ? 'Desmarcar' : 'Escolher este'}" aria-label="${p.chosen ? 'Desmarcar' : 'Escolher'} ${h(p.name)}"></button>
               <div class="grow">
                 <b>${h(p.name)}</b>
                 <div class="flags">${foodTags(p)}${num(p.costPP) ? `<span class="muted small">${money(p.costPP, t.currency)}/pessoa${n > 1 ? ` · ${money(placeCost(t, p), t.currency)}` : ''}</span>` : ''}${hasPos(p) ? '' : '<span class="warn small">sem posição</span>'}</div>
               </div>
-              <button class="icon small-icon" data-action="opt-edit" data-id="${p.id}" aria-label="Editar ${h(p.name)}" title="Editar">✎</button>
-              <button class="icon small-icon danger" data-action="remove-place" data-id="${p.id}" aria-label="Remover ${h(p.name)}" title="Remover">✕</button>
+              ${ui.editOpt === p.id
+                ? `<button class="icon small-icon done-icon" data-action="opt-edit" data-id="${p.id}" aria-expanded="true" aria-label="Concluir edição de ${h(p.name)}" title="Concluir edição">✓</button>`
+                : `<button class="icon small-icon" data-action="opt-edit" data-id="${p.id}" aria-expanded="false" aria-label="Editar ${h(p.name)}" title="Editar">✎</button>
+              <button class="icon small-icon danger" data-action="remove-place" data-id="${p.id}" aria-label="Remover ${h(p.name)}" title="Remover">✕</button>`}
             </li>
-            ${ui.editOpt === p.id ? `<li class="opt-edit">${foodFields(t, p)}</li>` : ''}`).join('')}</ul>` : ''}
+            ${ui.editOpt === p.id ? optEditPanel(t, p) : ''}`).join('')}</ul>` : ''}
         </div>`;
       }).join('')}
       <p class="muted small">Sem restaurante escolhido, o previsto usa a média das opções ou o orçamento por pessoa (Reservas → Orçamento diário).</p>
     </section>`;
+}
+
+// Painel de edição de uma opção de restaurante: título claro e botão "Concluir" para fechar.
+function optEditPanel(t, p) {
+  return `
+    <li class="opt-edit" id="opt-edit-${p.id}">
+      <div class="opt-edit-head">
+        <span class="opt-edit-tag">✎ Editando</span>
+        <button class="link small" data-action="opt-edit" data-id="${p.id}">Fechar ✕</button>
+      </div>
+      <label>Nome<input data-bind="place:${p.id}.name" value="${h(p.name)}" placeholder="Nome do restaurante"></label>
+      ${foodFields(t, p)}
+      <input class="note" placeholder="Anotação (prato, reserva, link…)" data-bind="place:${p.id}.note" value="${h(p.note)}">
+      <div class="opt-edit-foot">
+        <button class="link small" data-action="pick" data-kind="place" data-id="${p.id}" data-prefix="" data-label="${h(p.name)}">📍 ${hasPos(p) ? 'Ajustar no mapa' : 'Marcar no mapa'}</button>
+        <button class="link small danger" data-action="remove-place" data-id="${p.id}">Remover</button>
+        <button class="btn primary small push-right" data-action="opt-edit" data-id="${p.id}">✓ Concluir</button>
+      </div>
+    </li>`;
 }
 
 // campos de um restaurante (no cartão do roteiro e na edição da opção)
@@ -1981,6 +2002,15 @@ document.addEventListener('submit', async (e) => {
 });
 
 // ---------------------------------------------------------------- cliques
+// Esc fecha a edição da opção de restaurante
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !ui.editOpt || document.querySelector('dialog[open]')) return;
+  const id = ui.editOpt;
+  ui.editOpt = null;
+  renderPanel();
+  document.querySelector(`[data-action="opt-edit"][data-id="${id}"]`)?.focus({ preventScroll: true });
+});
+
 // como chegar a um ponto (trecho escolhido à mão)
 document.addEventListener('change', (e) => {
   const owner = e.target.dataset?.legOwner;
@@ -2277,9 +2307,20 @@ document.addEventListener('click', async (e) => {
       save();
       return renderPanel();
     }
-    case 'opt-edit':
-      ui.editOpt = ui.editOpt === el.dataset.id ? null : el.dataset.id;
-      return renderPanel();
+    case 'opt-edit': {
+      const closing = ui.editOpt === el.dataset.id;
+      ui.editOpt = closing ? null : el.dataset.id;
+      renderPanel();
+      if (closing) {
+        // ao concluir, volta o foco para a opção e mostra um aviso curto
+        document.querySelector(`[data-action="opt-edit"][data-id="${el.dataset.id}"]`)?.focus({ preventScroll: true });
+        toast('Opção salva.', 'ok');
+      } else {
+        document.querySelector(`#opt-edit-${el.dataset.id} input`)?.focus({ preventScroll: true });
+        document.getElementById(`opt-edit-${el.dataset.id}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+      return;
+    }
 
     // novo lugar
     case 'np-open':
