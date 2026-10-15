@@ -72,6 +72,15 @@ Previsto de cada refeição:
 ### Passeios
 Cada passeio tem **duração esperada** (30 min até o dia inteiro). O dia mostra o tempo em passeios mais o tempo de deslocamento.
 
+**Atrações do passeio:** no cartão do passeio, toque em **🎟️ Atrações** para abrir a lista com o nome e o preço por pessoa de cada atração (preço vazio = não sei; 0 = grátis). Toque na **⭐** nas que mais te interessam. O modal mostra a soma das ⭐ por pessoa e para o grupo, e o botão **Usar ⭐ como custo do passeio** coloca essa soma no custo.
+No cartão, as ⭐ viram um **checklist recolhido** ("⭐ Quero ver 1/3"): toque para abrir e marque o que já visitou.
+
+### Rotas sem estourar a cota
+- Cada trecho é consultado **uma vez** e fica guardado no aparelho. Abrir o app, trocar de aba ou de pacote não consulta de novo. O app só consulta quando as paradas do dia mudam.
+- As consultas novas esperam 1,5 s depois da última edição (várias mudanças seguidas viram uma só) e saem uma por vez.
+- **🔁 Rotas automáticas** (aba Roteiro): desligue para só consultar quando tocar em **Calcular rotas (N dias)**. As rotas já salvas continuam aparecendo.
+- Se o OpenRouteService esgotar a cota, o app usa o **OSRM público da FOSSGIS** (grátis, sem chave). Se os dois falharem, mostra a estimativa em linha reta. A estimativa não fica salva, e "Calcular rotas" tenta de novo.
+
 ### Modo km
 O botão **📏 Modo km** no Roteiro mostra a distância entre cada etapa do dia:
 - na lista, a distância de cada trecho em destaque e o **odômetro** (km acumulados) em cada parada;
@@ -149,10 +158,11 @@ Outros recursos:
 | OpenStreetMap (Nominatim/Photon) | Buscar endereços e lugares pelo nome | Não |
 | OpenStreetMap | Imagens do mapa | Não |
 | OpenRouteService | Rotas reais a pé, de carro e de bicicleta (2.000/dia) | Sim (grátis), **opcional** |
+| OSRM da FOSSGIS (routing.openstreetmap.de) | Rotas de reserva quando o ORS falha ou não está configurado (uso leve, 1 consulta/s) | Não |
 | Supabase | Sincronizar computador ↔ celular | Sim (grátis), **opcional** |
 
 Só a senha (`APP_PASSWORD`) é obrigatória.
-- **Sem o OpenRouteService:** as distâncias são estimadas em linha reta, com uma correção de ~30–40%.
+- **Sem o OpenRouteService:** as rotas vêm do OSRM público da FOSSGIS. Se ele também falhar, as distâncias são estimadas em linha reta, com uma correção de ~30–40%.
 - **Sem o Supabase:** os dados ficam só no navegador onde você os criou.
 
 ---
@@ -177,6 +187,7 @@ Sempre que adicionar ou alterar uma variável, faça um novo deploy: aba **Deplo
 1. Cadastre-se em <https://openrouteservice.org/dev/#/signup>.
 2. No painel, crie um token (plano *Standard*, gratuito).
 3. Cadastre a variável `ORS_API_KEY` na Vercel.
+4. (Opcional) `ROUTE_PROVIDER`: `osrm` usa só o OSRM (pula o ORS), `ors` usa só o ORS e `estimate` não consulta nenhum serviço. Vazio = ORS → OSRM → estimativa.
 
 ### 4. (Opcional) Sincronizar entre aparelhos – Supabase
 1. Crie um projeto gratuito em <https://supabase.com>.
@@ -240,7 +251,7 @@ js/store.js           salvar/carregar (nuvem + navegador + offline)
 js/api.js             chamadas às funções do servidor
 js/map.js             mapa (Leaflet) e "marcar no mapa"
 api/geocode.js        busca de endereços (OpenStreetMap)
-api/route.js          rotas (OpenRouteService) ou estimativa
+api/route.js          rotas: OpenRouteService → OSRM (FOSSGIS) → estimativa
 api/data.js           Supabase (salvar/carregar)
 api/keepalive.js      evita a pausa do Supabase
 api/status.js         valida a senha e lista recursos ativos

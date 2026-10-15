@@ -52,7 +52,7 @@ export function allow(req, res, methods) {
 }
 
 export const features = () => ({
-  routes: !!process.env.ORS_API_KEY,
+  routes: (process.env.ROUTE_PROVIDER || '').toLowerCase() !== 'estimate',
   cloud: !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY),
 });
 

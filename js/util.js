@@ -104,6 +104,14 @@ export function mealPlan(trip, i, meal) {
   return { meal, opts, chosen, value, basis };
 }
 
+// Atrações de um passeio: [{id, name, price (por pessoa; vazio = sem preço), interest, done}]
+export function attractionTotals(p) {
+  const list = Array.isArray(p?.attractions) ? p.attractions : [];
+  const fav = list.filter((a) => a.interest);
+  const sum = (l) => l.reduce((acc, a) => acc + num(a.price), 0);
+  return { count: list.length, fav: fav.length, done: fav.filter((a) => a.done).length, favPP: sum(fav), allPP: sum(list) };
+}
+
 export const dayPlaces = (trip, i) => act(trip.places).filter((p) => p.day === i && !isOption(p)).sort((a, b) => a.order - b.order);
 
 // Durações sugeridas para passeios (minutos)

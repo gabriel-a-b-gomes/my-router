@@ -1,12 +1,12 @@
 import {
-  uid, h, num, money, km, dur, fmtDate, fmtTime, localToday, daysBetween, tripDays, carOn, modeFor,
+  uid, h, num, money, attractionTotals, km, dur, fmtDate, fmtTime, localToday, daysBetween, tripDays, carOn, modeFor,
   dayPlaces, flightsOn, hasPos, dayPlan, dayColor, CATEGORIES, catIcon, EXP_CATS, plannedDay, spentOn,
   sumAmount, tripSummary, newTrip, flightLeg, carRental, carKm, computedDailies, LEG_CATS, flightKm, flightEnds,
   greatCircle, dayKm, pickupAfterFlight, returnBeforeFlight, haversineKm, MEALS, PRICE_TAGS, FOOD_STYLES,
   mealPlan, placeCost, DURATIONS, fmtDuration, isActive, act, groupOf, currentChoices, applyChoices, sameChoices, simulate,
   ensurePackages, activePackage, switchPackage, clonePackageData, packageCost, packageData,
 } from './util.js';
-import { api, getPassword, setPassword, geocode, getRoute } from './api.js';
+import { api, getPassword, setPassword, geocode, getRoute, forgetEstimates } from './api.js';
 import { store, loadData, loadOffline, save, getTrip, onSync, replaceAll } from './store.js';
 import { mountMap, drawMap, refreshSize, setPicking } from './map.js';
 
@@ -33,6 +33,8 @@ const ui = {
   fitKey: '',
   layers: loadLayers(), // camadas visíveis no mapa
   kmMode: loadPref('roteiro:kmMode') === '1', // mostra os km entre cada etapa do dia
+  attrOpen: new Set(), // checklists de atrações abertos
+  autoRoutes: loadPref('roteiro:autoRoutes') !== '0', // consulta rotas novas sozinho (com espera)
   editOpt: null, // opção de restaurante sendo editada no bloco Refeições
   homeTab: 'ativas', // 'ativas' | 'canceladas'
   mapOnly: false, // celular: esconde os cadastros e deixa só o mapa
@@ -532,10 +534,30 @@ function renderPanel() {
   panel.innerHTML = (ui.pick ? pickBanner() : '') + showMapBar + cancelledBanner + html;
   if (activeBind) panel.querySelector(`[data-bind="${CSS.escape(activeBind)}"]`)?.focus();
   updateMap();
-  // calcula (com cache) as rotas que estão faltando para o que está na tela
-  if (ui.tab === 'roteiro' && ui.day !== 'all') ensureRoute(t, ui.day);
-  else if (ui.tab !== 'gastos') tripDays(t).forEach((_, i) => ensureRoute(t, i));
+  // rotas: o que já está salvo aparece na hora; o que falta é consultado depois de uma pausa
+  if (ui.tab === 'roteiro' && ui.day !== 'all') scheduleRoutes(t, [ui.day]);
+  else if (ui.tab !== 'gastos') scheduleRoutes(t, tripDays(t).map((_, i) => i));
 }
+
+// Evita gastar a cota: lê o cache imediatamente e só consulta o servidor 1,5 s depois da
+// última mudança (várias edições seguidas viram uma consulta só), um dia de cada vez.
+let routeTimer = null;
+function scheduleRoutes(t, days) {
+  days.forEach((i) => ensureRoute(t, i, { cacheOnly: true }));
+  clearTimeout(routeTimer);
+  if (!ui.autoRoutes) return;
+  routeTimer = setTimeout(async () => {
+    for (const i of days) {
+      if (ui.tripId !== t.id) return;
+      await ensureRoute(t, i);
+    }
+  }, 1500);
+}
+// quantos dias da viagem ainda estão sem rota calculada
+const missingRouteDays = (t) => tripDays(t).filter((_, i) => { const rf = routeFor(t, i); return rf.points.length > 1 && !rf.route; }).length;
+// avisos de rota aparecem uma vez por sessão (e não a cada dia)
+const shownNotes = new Set();
+const noteOnce = (msg, kind) => { if (msg && !shownNotes.has(msg)) { shownNotes.add(msg); toast(msg, kind); } };
 
 // ---------------------------------------------------------------- posições (endereços e "marcar no mapa")
 // kind: stay | place | flight | car | new ; prefix: '' (lat/lng) ou from/to/pickup/return
@@ -683,6 +705,122 @@ function kmStages(t, i) {
 }
 
 // alternativas de um passeio, logo abaixo do vigente
+// ---------------------------------------------------------------- atrações do passeio
+// Checklist recolhido no cartão: só as atrações marcadas com ⭐ (as que mais interessam).
+function attractionChecklist(t, p) {
+  const list = p.attractions || [];
+  if (!list.length) return '';
+  const st = attractionTotals(p);
+  const fav = list.filter((a) => a.interest);
+  const priceTxt = (a) => (a.price === '' || a.price == null ? '' : num(a.price) ? money(a.price, t.currency) : 'grátis');
+  const summary = fav.length
+    ? `⭐ Quero ver <b class="attr-count">${st.done}/${st.fav}</b>${st.favPP ? ` · ${money(st.favPP, t.currency)}/pessoa` : ''}`
+    : `🎟️ ${list.length} ${list.length > 1 ? 'atrações' : 'atração'} · nenhuma marcada com ⭐`;
+  return `
+    <details class="attr-check" data-attr-place="${p.id}" ${ui.attrOpen.has(p.id) ? 'open' : ''}>
+      <summary>${summary}</summary>
+      ${fav.length ? `<ul>${fav.map((a) => `
+        <li class="${a.done ? 'done' : ''}">
+          <label><input type="checkbox" data-attr-done="${p.id}:${a.id}" ${a.done ? 'checked' : ''}><span>${h(a.name || 'Sem nome')}</span></label>
+          <span class="muted small">${priceTxt(a)}</span>
+        </li>`).join('')}</ul>` : ''}
+      <button class="link small" data-action="attr-open" data-id="${p.id}">Ver todas e editar</button>
+    </details>`;
+}
+
+// Modal com a lista completa: nome, preço por pessoa e ⭐ de interesse.
+function attractionsDialog(t, p) {
+  p.attractions ||= [];
+  document.getElementById('attr-dialog')?.remove();
+  const dlg = document.createElement('dialog');
+  dlg.id = 'attr-dialog';
+  dlg.className = 'dialog dialog-wide';
+  const n = Math.max(1, num(t.travelers));
+  const row = (a) => `
+    <li class="attr-row ${a.interest ? 'fav' : ''}" data-aid="${a.id}">
+      <button type="button" class="star" data-attr="star" aria-pressed="${!!a.interest}" title="Marcar como interesse">${a.interest ? '★' : '☆'}</button>
+      <input class="attr-name" data-attr="name" value="${h(a.name)}" placeholder="Nome da atração" aria-label="Nome">
+      <input class="attr-price" data-attr="price" inputmode="decimal" value="${a.price === '' || a.price == null ? '' : String(a.price).replace('.', ',')}" placeholder="R$/pessoa" aria-label="Preço por pessoa">
+      <button type="button" class="icon" data-attr="del" aria-label="Excluir">✕</button>
+    </li>`;
+  const totals = () => {
+    const st = attractionTotals(p);
+    return `<div><b>⭐ ${st.fav}</b> de ${st.count} marcadas · <b>${money(st.favPP, t.currency)}</b>/pessoa${n > 1 ? ` · <b>${money(st.favPP * n, t.currency)}</b> para ${n}` : ''}</div>
+      <div class="muted small">Todas: ${money(st.allPP, t.currency)}/pessoa</div>`;
+  };
+  dlg.innerHTML = `
+    <form method="dialog" class="dialog-body">
+      <h2>🎟️ Atrações · ${h(p.name)}</h2>
+      <p class="muted small">Toque na ⭐ para marcar as que mais te interessam — elas viram um checklist no cartão do passeio. Preço por pessoa; deixe vazio se não souber e 0 se for grátis.</p>
+      <ul class="attr-list">${p.attractions.map(row).join('')}</ul>
+      <div class="attr-add">
+        <input data-new="name" placeholder="Nova atração" aria-label="Nova atração">
+        <input data-new="price" inputmode="decimal" placeholder="R$/pessoa" aria-label="Preço da nova atração">
+        <button type="button" class="btn primary" data-attr="add">＋</button>
+      </div>
+      <div class="attr-totals">${totals()}</div>
+      <div class="dialog-actions">
+        <button type="button" class="btn ghost" data-attr="use-cost" title="Coloca a soma das ⭐ como custo do passeio">Usar ⭐ como custo do passeio</button>
+        <button class="btn primary" value="ok">Pronto</button>
+      </div>
+    </form>`;
+  document.body.appendChild(dlg);
+  const list = dlg.querySelector('.attr-list');
+  const refresh = () => { dlg.querySelector('.attr-totals').innerHTML = totals(); save(); };
+  const find = (el) => p.attractions.find((a) => a.id === el.closest('[data-aid]')?.dataset.aid);
+  const parsePrice = (v) => { const x = String(v).trim(); return x === '' ? '' : num(x.includes(',') ? x.replace(/\./g, '').replace(',', '.') : x); };
+  const add = () => {
+    const ni = dlg.querySelector('[data-new=name]'), pi = dlg.querySelector('[data-new=price]');
+    if (!ni.value.trim()) { ni.focus(); return; }
+    const a = { id: uid(), name: ni.value.trim(), price: parsePrice(pi.value), interest: false, done: false };
+    p.attractions.push(a);
+    list.insertAdjacentHTML('beforeend', row(a));
+    ni.value = ''; pi.value = ''; ni.focus();
+    refresh();
+  };
+  dlg.addEventListener('input', (e) => {
+    const a = find(e.target);
+    if (!a) return;
+    if (e.target.dataset.attr === 'name') a.name = e.target.value;
+    if (e.target.dataset.attr === 'price') a.price = parsePrice(e.target.value);
+    refresh();
+  });
+  dlg.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.dataset.new) { e.preventDefault(); add(); }
+    else if (e.key === 'Enter' && e.target.dataset.attr) e.preventDefault();
+  });
+  dlg.addEventListener('click', async (e) => {
+    if (e.target === dlg) return dlg.close();
+    const b = e.target.closest('[data-attr]');
+    const kind = b?.dataset.attr;
+    if (kind === 'add') return add();
+    if (kind === 'star') {
+      const a = find(b);
+      a.interest = !a.interest;
+      if (!a.interest) a.done = false;
+      b.textContent = a.interest ? '★' : '☆';
+      b.setAttribute('aria-pressed', a.interest);
+      b.closest('li').classList.toggle('fav', a.interest);
+      return refresh();
+    }
+    if (kind === 'del') {
+      const a = find(b);
+      p.attractions = p.attractions.filter((x) => x !== a);
+      b.closest('li').remove();
+      return refresh();
+    }
+    if (kind === 'use-cost') {
+      const st = attractionTotals(p);
+      p.cost = st.favPP * n;
+      save();
+      toast(`Custo do passeio: ${money(p.cost, t.currency)}${n > 1 ? ` (${n} pessoas)` : ''}.`, 'ok');
+    }
+  });
+  dlg.addEventListener('close', () => { setTimeout(() => dlg.remove(), 200); renderPanel(); });
+  dlg.showModal();
+  if (!p.attractions.length) dlg.querySelector('[data-new=name]').focus();
+}
+
 function placeAlternatives(t, p) {
   const others = groupOf(t.places, p).filter((x) => x !== p);
   if (!others.length) return '';
@@ -826,7 +964,8 @@ function panelRoteiro(t) {
         </select>
       </label>
       <button class="btn ${ui.kmMode ? 'toggle-on' : 'ghost'}" data-action="km-mode" aria-pressed="${ui.kmMode}" title="Mostrar a distância entre cada etapa do dia">📏 Modo km</button>
-      <button class="btn ghost" data-action="calc-routes" ${ui.busy.routes ? 'disabled' : ''}>${ui.busy.routes ? 'Calculando…' : 'Recalcular rotas'}</button>
+      <button class="btn ${ui.autoRoutes ? 'toggle-on' : 'ghost'}" data-action="auto-routes" aria-pressed="${ui.autoRoutes}" title="Desligado: as rotas só são consultadas quando você tocar em Calcular rotas (as já salvas continuam aparecendo)">🔁 Rotas automáticas</button>
+      ${(() => { const miss = missingRouteDays(t); return `<button class="btn ghost" data-action="calc-routes" ${ui.busy.routes ? 'disabled' : ''}>${ui.busy.routes ? 'Calculando…' : miss ? `Calcular rotas (${miss} ${miss > 1 ? 'dias' : 'dia'})` : 'Calcular rotas'}</button>`; })()}
     </div>
     ${ui.np.open ? newPlaceForm(t) : ''}`;
 
@@ -927,9 +1066,11 @@ function panelRoteiro(t) {
             <div class="row wrap small">
               <button class="link" data-action="pick" data-kind="place" data-id="${p.id}" data-prefix="" data-label="${h(p.name)}">📍 ${hasPos(p) ? 'Ajustar no mapa' : 'Marcar no mapa'}</button>
               ${hasPos(p) ? `<a href="https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lng}#map=17/${p.lat}/${p.lng}" target="_blank" rel="noopener">Abrir no mapa</a>` : ''}
+              ${p.category === 'comida' ? '' : `<button class="link" data-action="attr-open" data-id="${p.id}">🎟️ Atrações${p.attractions?.length ? ` (${p.attractions.length})` : ''}</button>`}
               ${p.category === 'comida' ? '' : `<button class="link" data-action="alt-add" data-kind="place" data-id="${p.id}">⇄ Alternativa</button>`}
               <button class="link danger push-right" data-action="remove-place" data-id="${p.id}">Remover</button>
             </div>
+            ${p.category === 'comida' ? '' : attractionChecklist(t, p)}
             ${placeAlternatives(t, p)}
           </li>`;
     };
@@ -940,7 +1081,7 @@ function panelRoteiro(t) {
           <span class="muted">${fmtDate(date)}${car ? ` · 🚗 ${h(car.company || 'carro alugado')}` : ''}</span>
         </div>
         <div class="stats">
-          ${rf.route ? `<b>${km(rf.route.distance)}</b> · ${dur(rf.route.duration)}${rf.route.source === 'estimate' ? ' <span class="muted" title="Estimativa em linha reta">(estimado)</span>' : ''}` : rf.points.length > 1 ? '<span class="muted"><span class="spin-sm"></span> calculando rota</span>' : ''}
+          ${rf.route ? `<b>${km(rf.route.distance)}</b> · ${dur(rf.route.duration)}${rf.route.source === 'estimate' ? ' <span class="muted" title="Estimativa em linha reta">(estimado)</span>' : ''}` : rf.points.length > 1 ? (ui.autoRoutes ? '<span class="muted"><span class="spin-sm"></span> calculando rota</span>' : '<span class="muted">rota não calculada</span>') : ''}
           <div>Previsto <b>${money(pd.total, t.currency)}</b></div>
         </div>
       </div>
@@ -972,25 +1113,31 @@ function panelRoteiro(t) {
 
 // Busca as rotas do dia (com cache): trechos seguidos do mesmo tipo viram uma consulta.
 const pending = new Set();
-async function ensureRoute(t, i) {
+async function ensureRoute(t, i, { cacheOnly = false } = {}) {
   const rf = routeFor(t, i);
   if (rf.points.length < 2) {
     if (t.dayStats?.[i]) { delete t.dayStats[i]; save(); }
     return;
   }
   if (rf.route || pending.has(rf.key)) return;
+  const groups = [];
+  rf.legs.forEach((l, k) => {
+    const g = groups[groups.length - 1];
+    if (g && g.cat === l.cat) g.end = k + 1;
+    else groups.push({ cat: l.cat, start: k, end: k + 1 });
+  });
+  const gPts = (g) => rf.points.slice(g.start, g.end + 1);
+  if (cacheOnly) {
+    // só monta o dia se TODOS os trechos já estiverem no cache (nenhuma consulta ao servidor)
+    const hits = await Promise.all(groups.map((g) => getRoute(gPts(g), LEG_CATS[g.cat].profile, { cacheOnly: true })));
+    if (hits.some((x) => !x) || ui.routes.has(rf.key)) return;
+  }
   pending.add(rf.key);
   try {
-    const groups = [];
-    rf.legs.forEach((l, k) => {
-      const g = groups[groups.length - 1];
-      if (g && g.cat === l.cat) g.end = k + 1;
-      else groups.push({ cat: l.cat, start: k, end: k + 1 });
-    });
-    const result = await withMapBusy('Calculando rotas…', async () => {
-      const out = { legs: [], lines: [], distance: 0, duration: 0, byCat: {}, source: 'ors', warning: '' };
+    const run = async () => {
+      const out = { legs: [], lines: [], distance: 0, duration: 0, byCat: {}, source: 'route', warning: '', note: '' };
       for (const g of groups) {
-        const pts = rf.points.slice(g.start, g.end + 1);
+        const pts = gPts(g);
         const r = await getRoute(pts, LEG_CATS[g.cat].profile);
         // proteção: sem a distância de cada trecho, reparte o total pela linha reta entre as paradas
         let legs = r.legs || [];
@@ -1006,11 +1153,14 @@ async function ensureRoute(t, i) {
         out.byCat[g.cat] = (out.byCat[g.cat] || 0) + r.distance;
         if (r.source === 'estimate') out.source = 'estimate';
         if (r.warning) out.warning = r.warning;
+        if (r.note) out.note = r.note;
       }
       return out;
-    });
+    };
+    const result = cacheOnly ? await run() : await withMapBusy('Calculando rotas…', run);
     ui.routes.set(rf.key, result);
-    if (result.warning) toast(result.warning, 'warn');
+    if (result.warning) noteOnce(result.warning, 'warn');
+    else if (result.note) noteOnce(result.note, 'info');
     const prev = t.dayStats[i];
     const stats = { v: 2, distance: result.distance, duration: result.duration, byCat: result.byCat, source: result.source };
     if (!prev || JSON.stringify(prev) !== JSON.stringify(stats)) {
@@ -1799,6 +1949,26 @@ document.addEventListener('submit', async (e) => {
 });
 
 // ---------------------------------------------------------------- cliques
+// checklist de atrações: marcar como visitada e lembrar se está aberto
+document.addEventListener('change', (e) => {
+  const key = e.target.dataset?.attrDone;
+  if (!key) return;
+  const [pid, aid] = key.split(':');
+  const p = trip()?.places.find((x) => x.id === pid);
+  const a = p?.attractions?.find((x) => x.id === aid);
+  if (!a) return;
+  a.done = e.target.checked;
+  e.target.closest('li').classList.toggle('done', a.done);
+  const st = attractionTotals(p);
+  const c = e.target.closest('details')?.querySelector('.attr-count');
+  if (c) c.textContent = `${st.done}/${st.fav}`;
+  save();
+});
+document.addEventListener('toggle', (e) => {
+  const id = e.target.dataset?.attrPlace;
+  if (id) e.target.open ? ui.attrOpen.add(id) : ui.attrOpen.delete(id);
+}, true);
+
 document.addEventListener('click', async (e) => {
   const el = e.target.closest('[data-action]');
   if (!el || el.tagName === 'INPUT') return;
@@ -1838,6 +2008,11 @@ document.addEventListener('click', async (e) => {
       save();
       return renderPanel();
     }
+    case 'attr-open': {
+      const p = t.places.find((x) => x.id === el.dataset.id);
+      if (p) attractionsDialog(t, p);
+      return;
+    }
     case 'remove-place': {
       const p = t.places.find((x) => x.id === el.dataset.id);
       if (p && await confirmDialog({ title: `Remover "${p.name}"?`, message: 'O lugar sai do roteiro e do mapa.', confirmLabel: 'Remover', danger: true })) {
@@ -1849,10 +2024,18 @@ document.addEventListener('click', async (e) => {
       return;
     }
     case 'calc-routes':
+      // não apaga o cache salvo: consulta só o que falta e refaz o que era estimativa
       return withBusy('routes', async () => {
-        ui.routes.clear();
+        forgetEstimates();
+        for (const [k, r] of ui.routes) if (r.source === 'estimate') ui.routes.delete(k);
+        shownNotes.clear();
         for (let i = 0; i < tripDays(t).length; i++) await ensureRoute(t, i);
       });
+    case 'auto-routes':
+      ui.autoRoutes = !ui.autoRoutes;
+      savePref('roteiro:autoRoutes', ui.autoRoutes ? '1' : '0');
+      toast(ui.autoRoutes ? 'Rotas novas serão calculadas sozinhas.' : 'Rotas só serão calculadas quando você tocar em “Calcular rotas”.');
+      return renderPanel();
 
     case 'theme':
       return applyTheme(el.dataset.next);
