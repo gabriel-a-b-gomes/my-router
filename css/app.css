@@ -356,7 +356,7 @@ label > input, label > select, label > .input-with-btn { color: var(--ink); font
 .stop-head { display: flex; gap: .6rem; align-items: flex-start; }
 .stop-actions { display: flex; gap: .25rem; }
 .stop-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(82px, 1fr)); gap: .45rem; align-items: end; }
-.stop-fields input, .stop-fields select { padding: .45rem .5rem; font-size: .85rem; }
+.stop-fields input, .stop-fields select { padding: .45rem .5rem; font-size: .85rem; height: 40px; }
 @media (max-width: 520px) { .stop-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .note { padding: .45rem .65rem; font-size: .88rem; }
 .leg { font-size: .8rem; color: var(--muted); padding: .1rem 0 .1rem 2.4rem; position: relative; }
@@ -400,11 +400,11 @@ label > input, label > select, label > .input-with-btn { color: var(--ink); font
 .amount-wrap:focus-within { box-shadow: 0 0 0 4px var(--primary-soft); }
 .amount-wrap .cur { font-weight: 700; color: var(--muted); }
 .amount { border: 0 !important; outline: none !important; font: 800 2.1rem/1.2 var(--font-display); padding: .4rem 0; background: transparent; }
-.cat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .45rem; }
+.cat-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .45rem; }
 .cat {
   font: 600 .75rem/1.2 var(--font-body); cursor: pointer; color: var(--ink);
   display: flex; flex-direction: column; align-items: center; gap: .15rem; padding: .55rem .2rem;
-  background: var(--surface-2); border: 2px solid transparent; border-radius: var(--r-md); text-align: center;
+  background: var(--surface-2); border: 2px solid transparent; border-radius: var(--r-md); text-align: center; overflow: hidden;
 }
 .cat span { font-size: 1.4rem; }
 .cat.active { border-color: var(--primary); background: var(--primary-soft); }
@@ -576,7 +576,7 @@ label.check small { color: var(--muted); font-weight: 400; font-size: .8rem; lin
 .meal-opt.chosen .choose { border-color: var(--primary); }
 .meal-opt.chosen .choose::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: var(--primary); }
 .small-icon { width: 32px; height: 32px; border-radius: 10px; font-size: .85rem; }
-.opt-edit { padding: .2rem .2rem .5rem 2.4rem; }
+.opt-edit { padding: .2rem .5rem .5rem; margin-bottom: .5rem; box-shadow: var(--shadow); border-radius: 0 0 var(--r-sm) var(--r-sm); }
 .flags { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; margin-top: .2rem; }
 .flag { font-size: .72rem; font-weight: 600; padding: .12rem .5rem; border-radius: 999px; background: var(--surface-2); color: var(--ink); white-space: nowrap; }
 .flag-barato { background: #d9f2e3; color: #11643a; }
@@ -748,3 +748,12 @@ label.check small { color: var(--muted); font-weight: 400; font-size: .8rem; lin
 .attr-check li.done span { text-decoration: line-through; color: var(--muted); }
 .attr-check > .link { margin: 0 .8rem .55rem; }
 .dialog-wide .dialog-actions .btn { flex: 1 1 auto; }
+
+/* ---------- v11: como chegar em cada trecho ---------- */
+.leg { display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
+select.leg-mode {
+  width: auto !important; flex: 0 0 auto; max-width: 150px; min-width: 0; font-size: .75rem; padding: .12rem 1.5rem .12rem .5rem; margin-left: auto;
+  border-radius: 999px; border: 1px solid var(--border); background-color: var(--surface); color: var(--muted);
+  height: auto; min-height: 0; line-height: 1.3; background-position: right .4rem center; background-size: .6rem;
+}
+select.leg-mode.manual { border-color: var(--primary); color: var(--primary); font-weight: 600; background-color: var(--primary-soft); }

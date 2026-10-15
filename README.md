@@ -75,6 +75,12 @@ Cada passeio tem **duração esperada** (30 min até o dia inteiro). O dia mostr
 **Atrações do passeio:** no cartão do passeio, toque em **🎟️ Atrações** para abrir a lista com o nome e o preço por pessoa de cada atração (preço vazio = não sei; 0 = grátis). Toque na **⭐** nas que mais te interessam. O modal mostra a soma das ⭐ por pessoa e para o grupo, e o botão **Usar ⭐ como custo do passeio** coloca essa soma no custo.
 No cartão, as ⭐ viram um **checklist recolhido** ("⭐ Quero ver 1/3"): toque para abrir e marque o que já visitou.
 
+### Como chegar em cada parada (trecho a trecho)
+Entre uma parada e outra, na visão do dia, há um seletor **Como chegar**: **Auto**, 🚶 A pé, 🚲 Bike, 🚗 Carro (alugado, nos dias com carro, ou carro/app) e 🚐 Táxi/traslado.
+- **Auto** segue a regra do dia: carro alugado entre a retirada e a devolução, traslado de/para o aeroporto, e o "Deslocamento" da viagem nos dias sem carro.
+- Escolher outro modo vale só para aquele trecho (fica destacado). A rota, o tempo, o mapa e os km mudam na hora. **Trechos a pé ou de bike não entram no combustível do carro.**
+- Também dá para escolher o modo da volta ao hotel e da ida até a retirada ou a devolução do carro.
+
 ### Rotas sem estourar a cota
 - Cada trecho é consultado **uma vez** e fica guardado no aparelho. Abrir o app, trocar de aba ou de pacote não consulta de novo. O app só consulta quando as paradas do dia mudam.
 - As consultas novas esperam 1,5 s depois da última edição (várias mudanças seguidas viram uma só) e saem uma por vez.

@@ -531,12 +531,29 @@ function renderPanel() {
   const cancelledBanner = t.cancelled ? `<div class="cancel-banner" role="status">Esta viagem está cancelada.
     <button class="btn small" data-action="trip-restore" data-id="${t.id}">Reativar</button></div>` : '';
   const showMapBar = hidden ? '<button class="map-show-bar" data-action="map-hide">🗺️ Mostrar mapa</button>' : '';
+  const chipsScroll = panel.querySelector('.day-chips')?.scrollLeft || 0;
   panel.innerHTML = (ui.pick ? pickBanner() : '') + showMapBar + cancelledBanner + html;
+  keepChipInView(panel.querySelector('.day-chips'), chipsScroll);
   if (activeBind) panel.querySelector(`[data-bind="${CSS.escape(activeBind)}"]`)?.focus();
   updateMap();
   // rotas: o que já está salvo aparece na hora; o que falta é consultado depois de uma pausa
   if (ui.tab === 'roteiro' && ui.day !== 'all') scheduleRoutes(t, [ui.day]);
   else if (ui.tab !== 'gastos') scheduleRoutes(t, tripDays(t).map((_, i) => i));
+}
+
+// Fileira de dias: ao redesenhar, mantém a rolagem onde estava e traz o dia escolhido
+// para o centro se ele estiver fora da vista (antes voltava sempre para o início).
+function keepChipInView(row, prevLeft) {
+  if (!row) return;
+  row.scrollLeft = prevLeft;
+  const active = row.querySelector('.chip-btn.active');
+  if (!active) return;
+  const left = active.getBoundingClientRect().left - row.getBoundingClientRect().left + row.scrollLeft, right = left + active.offsetWidth;
+  if (left < row.scrollLeft + 8 || right > row.scrollLeft + row.clientWidth - 8) {
+    const target = left - (row.clientWidth - active.offsetWidth) / 2;
+    const smooth = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+    row.scrollTo({ left: Math.max(0, target), behavior: prevLeft || !smooth ? 'smooth' : 'auto' });
+  }
 }
 
 // Evita gastar a cota: lê o cache imediatamente e só consulta o servidor 1,5 s depois da
@@ -667,14 +684,29 @@ function legInto(rf, owner) {
   const k = rf.owners.findIndex((o) => o[0] === owner);
   return k > 0 ? rf.route.legs[k - 1] : null;
 }
+// Seletor "como chegar" do trecho: Automático / A pé / Bike / Carro / Táxi
+const LEG_LABEL_SHORT = { rental: 'Carro alugado', drive: 'Carro/app', transfer: 'Táxi/traslado', foot: 'A pé', bike: 'Bike' };
+function legSelect(rf, owner, k) {
+  const plan = rf.legs[k - 1];
+  const choices = plan.carLeg ? ['rental', 'foot', 'bike', 'transfer'] : ['foot', 'bike', 'drive', 'transfer'];
+  const a = LEG_CATS[plan.auto];
+  return `<select class="leg-mode ${plan.manual ? 'manual' : ''}" data-leg-owner="${h(owner)}" data-leg-date="${rf.date}" aria-label="Como chegar" title="Como chegar até aqui">
+    <option value="">${a.icon} Auto</option>
+    ${choices.map((c) => `<option value="${c}" ${plan.manual && plan.cat === c ? 'selected' : ''}>${LEG_CATS[c].icon} ${LEG_LABEL_SHORT[c]}</option>`).join('')}
+  </select>`;
+}
 const legRow = (rf, owner) => {
-  const leg = legInto(rf, owner);
-  if (!leg) return '';
-  const c = LEG_CATS[leg.cat] || LEG_CATS.foot;
-  if (ui.kmMode) {
-    return `<li class="leg leg-${c.group} leg-km" title="${h(c.label)}"><span class="km-pill">${km(leg.distance)}</span> ${c.icon} ${h(c.label)} · ${dur(leg.duration)}</li>`;
+  const k = rf.owners.findIndex((o) => o[0] === owner);
+  if (k <= 0 || !rf.legs[k - 1]) return '';
+  const plan = rf.legs[k - 1];
+  const c = LEG_CATS[plan.cat] || LEG_CATS.foot;
+  const leg = rf.route?.legs[k - 1];
+  const info = leg ? `${dur(leg.duration)} · ${km(leg.distance)}` : '<span class="muted">sem rota ainda</span>';
+  const sel = legSelect(rf, owner, k);
+  if (ui.kmMode && leg) {
+    return `<li class="leg leg-${c.group} leg-km" title="${h(c.label)}"><span class="km-pill">${km(leg.distance)}</span> ${c.icon} ${h(c.label)} · ${dur(leg.duration)} ${sel}</li>`;
   }
-  return `<li class="leg leg-${c.group}" title="${h(c.label)}">${c.icon} ${dur(leg.duration)} · ${km(leg.distance)}${leg.cat === 'transfer' ? ' <span class="muted">táxi/traslado</span>' : ''}</li>`;
+  return `<li class="leg leg-${c.group}" title="${h(c.label)}">${c.icon} ${info}${plan.cat === 'transfer' ? ' <span class="muted">táxi/traslado</span>' : ''} ${sel}</li>`;
 };
 // odômetro: km acumulados do dia até o ponto deste dono
 function odometer(rf, owner) {
@@ -1949,6 +1981,22 @@ document.addEventListener('submit', async (e) => {
 });
 
 // ---------------------------------------------------------------- cliques
+// como chegar a um ponto (trecho escolhido à mão)
+document.addEventListener('change', (e) => {
+  const owner = e.target.dataset?.legOwner;
+  if (!owner) return;
+  const t = trip();
+  const p = t?.places.find((x) => x.id === owner);
+  const v = e.target.value;
+  if (p) { if (v) p.arriveBy = v; else delete p.arriveBy; }
+  else {
+    t.legBy ||= {};
+    const key = `${e.target.dataset.legDate}:${owner}`;
+    if (v) t.legBy[key] = v; else delete t.legBy[key];
+  }
+  save();
+  renderPanel();
+});
 // checklist de atrações: marcar como visitada e lembrar se está aberto
 document.addEventListener('change', (e) => {
   const key = e.target.dataset?.attrDone;

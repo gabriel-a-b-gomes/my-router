@@ -256,13 +256,27 @@ export function dayPlan(trip, i) {
     carUntil = returnDay ? idx('return') : points.length - 1;
     if (returnDay && carUntil < 0) carUntil = points.length - 1;
   }
+  // Como chegar a cada ponto: automático (regra abaixo) ou escolhido pelo usuário no trecho
+  // (lugar: p.arriveBy; retirada/devolução/volta ao hotel: trip.legBy["data:dono"]).
+  const byOwner = new Map(items.map((it) => [it.owner, it]));
+  const chosen = (k) => {
+    for (const o of owners[k + 1]) {
+      const it = byOwner.get(o);
+      const v = it?.kind === 'place' ? it.arriveBy : trip.legBy?.[`${date}:${o}`];
+      if (v && LEG_CATS[v] && v !== 'air') return v;
+    }
+    return '';
+  };
   const legs = [];
   for (let k = 0; k < points.length - 1; k++) {
-    let cat;
-    if (k >= carFrom && k + 1 <= carUntil) cat = 'rental';
-    else if (airport[k] || airport[k + 1]) cat = 'transfer';
-    else cat = MODE_CAT[trip.mode] || 'foot';
-    legs.push({ cat });
+    let auto;
+    const carLeg = k >= carFrom && k + 1 <= carUntil;
+    if (carLeg) auto = 'rental';
+    else if (airport[k] || airport[k + 1]) auto = 'transfer';
+    else auto = MODE_CAT[trip.mode] || 'foot';
+    let cat = chosen(k) || auto;
+    if (cat === 'rental' && !carLeg) cat = 'drive'; // sem carro alugado nesse trecho
+    legs.push({ cat, auto, manual: cat !== auto, carLeg });
   }
   return { date, car, items, points, owners, legs, start: a.start, end: a.end, pickup, ret, afterFlight, beforeFlight };
 }
