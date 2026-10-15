@@ -413,6 +413,10 @@ label > input, label > select, label > .input-with-btn { color: var(--ink); font
 .exp-row:last-child { border-bottom: 0; }
 .exp-icon { font-size: 1.3rem; width: 2rem; text-align: center; }
 
+@media (min-width: 900px) {
+  .cat-grid { grid-template-columns: repeat(4, minmax(0, 1fr));}
+}
+
 /* ---------- reservas ---------- */
 .res-item { display: flex; flex-direction: column; margin-bottom: .75rem; }
 .res-card, .voucher { background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--shadow); padding: 1rem 1.1rem; }
