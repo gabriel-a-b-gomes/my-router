@@ -926,3 +926,17 @@ select.leg-mode.manual { border-color: var(--primary); color: var(--primary); fo
 .tour-chip:hover { border-color: color-mix(in srgb, var(--primary) 45%, transparent); }
 .tour-chip b { color: var(--primary); }
 .tour-chip-go { margin-left: auto; font-size: 1.2rem; line-height: 1; color: var(--primary); }
+
+/* ---------- v16: ordem das atrações ---------- */
+.attr-handle {
+  flex: none; width: 22px; height: 34px; display: grid; place-items: center; cursor: grab; user-select: none;
+  color: var(--muted); font-size: .9rem; letter-spacing: -.2em; border-radius: 8px; touch-action: none;
+}
+.attr-handle:hover, .attr-handle:focus-visible { background: var(--surface-2); color: var(--ink); }
+.attr-list.is-dragging { cursor: grabbing; user-select: none; }
+.attr-list.is-dragging .attr-handle { cursor: grabbing; }
+.attr-item.dragging { box-shadow: 0 14px 28px -12px rgba(13, 59, 79, .55); border-color: var(--primary); position: relative; z-index: 3; opacity: .96; }
+.attr-item.moved { animation: attr-moved .4s ease-out; }
+@keyframes attr-moved { from { background: var(--primary-soft); } }
+.attr-order { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+.attr-sum { padding-left: .15rem; }

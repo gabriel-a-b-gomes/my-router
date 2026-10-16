@@ -1022,6 +1022,7 @@ function attractionsDialog(t, p) {
     return `
     <li class="attr-item ${a.interest ? 'fav' : ''} ${open ? 'open' : ''}" data-aid="${a.id}">
       <div class="attr-sum">
+        <span class="attr-handle" data-attr="handle" tabindex="0" role="button" aria-label="Arrastar para mudar a ordem (ou use as setas ↑ ↓)" title="Arraste para mudar a ordem">⋮⋮</span>
         <button type="button" class="star" data-attr="star" aria-pressed="${!!a.interest}" title="${a.interest ? 'Desmarcar' : 'Marcar como interesse'}" aria-label="Interesse">${a.interest ? '★' : '☆'}</button>
         <button type="button" class="attr-main" data-attr="toggle" aria-expanded="${open}">
           <span class="attr-title">${h(a.name) || '<span class="muted">Sem nome</span>'}</span>
@@ -1051,6 +1052,14 @@ function attractionsDialog(t, p) {
           </div>
           <div class="attr-results"></div>
         </div>
+        <div class="attr-field">
+          <span class="attr-label">Ordem no trajeto</span>
+          <div class="attr-order">
+            <button type="button" class="btn small" data-attr="up" ${idx === 0 ? 'disabled' : ''}>↑ Subir</button>
+            <button type="button" class="btn small" data-attr="down" ${idx === p.attractions.length - 1 ? 'disabled' : ''}>↓ Descer</button>
+            <span class="muted small">${idx + 1}ª de ${p.attractions.length}</span>
+          </div>
+        </div>
         <div class="edit-foot">
           <button type="button" class="link small danger" data-attr="del">Excluir atração</button>
           <button type="button" class="btn primary small" data-attr="toggle">✓ Concluir</button>
@@ -1069,7 +1078,7 @@ function attractionsDialog(t, p) {
         <h2>🎟️ Atrações</h2>
         <span class="muted small">${h(p.name)}</span>
       </div>
-      <p class="muted small">⭐ marca as que mais te interessam. Toque numa atração para editar preço, local e como chegar até ela.</p>
+      <p class="muted small">⭐ marca as que mais te interessam. Toque numa atração para editar preço, local e como chegar até ela. Arraste pela alça ⋮⋮ para mudar a ordem do trajeto.</p>
       <ul class="attr-list">${p.attractions.map(row).join('')}</ul>
       <div class="attr-add">
         <input data-new="name" placeholder="Nova atração" aria-label="Nova atração">
@@ -1096,6 +1105,71 @@ function attractionsDialog(t, p) {
     if (cur) { redraw(cur); liOf(cur)?.scrollIntoView({ block: 'nearest' }); }
   };
   const parsePrice = (v) => { const x = String(v).trim(); return x === '' ? '' : num(x.includes(',') ? x.replace(/\./g, '').replace(',', '.') : x); };
+  // ordem: o texto "Como chegar (saindo da entrada / vindo da anterior)" e a posição dependem dela
+  const redrawAll = () => { list.innerHTML = p.attractions.map(row).join(''); };
+  const move = (a, dir, focusSel) => {
+    const i = p.attractions.indexOf(a), j = i + dir;
+    if (i < 0 || j < 0 || j >= p.attractions.length) return;
+    [p.attractions[i], p.attractions[j]] = [p.attractions[j], p.attractions[i]];
+    redrawAll();
+    save();
+    const li = liOf(a);
+    li?.classList.add('moved');
+    setTimeout(() => li?.classList.remove('moved'), 400);
+    li?.scrollIntoView({ block: 'nearest' });
+    if (focusSel) li?.querySelector(focusSel)?.focus();
+  };
+  // arrastar pela alça ⋮⋮ (pointer events: funciona com o dedo e com o mouse)
+  let drag = null;
+  list.addEventListener('pointerdown', (e) => {
+    const handle = e.target.closest('[data-attr=handle]');
+    if (!handle || (e.button !== undefined && e.button !== 0)) return;
+    e.preventDefault();
+    const li = handle.closest('li');
+    drag = { li, id: li.dataset.aid, pointer: e.pointerId, startY: e.clientY, moved: false };
+    try { handle.setPointerCapture(e.pointerId); } catch {}
+    li.classList.add('dragging');
+    list.classList.add('is-dragging');
+    // ouve na página toda: mover a linha no DOM pode soltar a captura do ponteiro em alguns navegadores
+    document.addEventListener('pointermove', onDragMove, { passive: false });
+    document.addEventListener('pointerup', endDrag);
+    document.addEventListener('pointercancel', endDrag);
+  });
+  const onDragMove = (e) => {
+    if (!drag || e.pointerId !== drag.pointer) return;
+    e.preventDefault();
+    const y = e.clientY;
+    drag.li.style.transform = '';
+    const items = [...list.children].filter((x) => x !== drag.li);
+    const before = items.find((x) => { const r = x.getBoundingClientRect(); return y < r.top + r.height / 2; });
+    if (before !== drag.li.nextElementSibling || (!before && drag.li !== list.lastElementChild)) {
+      list.insertBefore(drag.li, before || null);
+      drag.moved = true;
+    }
+    // rola o modal quando o dedo chega perto das bordas
+    const body = dlg.querySelector('.dialog-body');
+    const r = body.getBoundingClientRect();
+    if (y < r.top + 40) body.scrollTop -= 12;
+    else if (y > r.bottom - 40) body.scrollTop += 12;
+  };
+  const endDrag = (e) => {
+    if (!drag || (e && e.pointerId !== drag.pointer)) return;
+    document.removeEventListener('pointermove', onDragMove);
+    document.removeEventListener('pointerup', endDrag);
+    document.removeEventListener('pointercancel', endDrag);
+    const { li, moved } = drag;
+    drag = null;
+    li.classList.remove('dragging');
+    list.classList.remove('is-dragging');
+    if (!moved) return;
+    const order = [...list.children].map((x) => x.dataset.aid);
+    p.attractions.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+    redrawAll();
+    save();
+    const cur = list.querySelector(`[data-aid="${li.dataset.aid}"]`);
+    cur?.classList.add('moved');
+    setTimeout(() => cur?.classList.remove('moved'), 400);
+  };
   const add = () => {
     const ni = dlg.querySelector('[data-new=name]'), pi = dlg.querySelector('[data-new=price]');
     if (!ni.value.trim()) { ni.focus(); return; }
@@ -1119,6 +1193,11 @@ function attractionsDialog(t, p) {
     refresh();
   });
   dlg.addEventListener('keydown', (e) => {
+    // teclado: setas na alça mudam a ordem
+    if (e.target.dataset.attr === 'handle' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      return move(find(e.target), e.key === 'ArrowUp' ? -1 : 1, '[data-attr=handle]');
+    }
     if (e.key === 'Enter' && e.target.dataset.new) { e.preventDefault(); add(); }
     else if (e.key === 'Enter' && e.target.dataset.attr) { e.preventDefault(); setOpen(null); }
   });
@@ -1129,6 +1208,7 @@ function attractionsDialog(t, p) {
     if (kind === 'add') return add();
     const a = b && find(b);
     if (kind === 'toggle') return setOpen(openId === a.id ? null : a.id);
+    if (kind === 'up' || kind === 'down') return move(a, kind === 'up' ? -1 : 1, `[data-attr=${kind}]:not(:disabled)`);
     if (kind === 'star') {
       a.interest = !a.interest;
       if (!a.interest) a.done = false;

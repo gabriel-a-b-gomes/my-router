@@ -79,6 +79,11 @@ No cartão, as ⭐ viram um **checklist recolhido** ("⭐ Quero ver 1/3"): toque
 - **🔎 Buscar local** (procura pelo nome perto do passeio e mostra até 5 resultados com a distância) ou **📍 Marcar no mapa** (o modal fecha, você toca no mapa e ele reabre).
 - **Como chegar** até ela, vindo da anterior: 🚶 A pé, 🚲 Bike, 🚗 Carro ou 🚐 Táxi/app. O padrão é a pé.
 
+**Ordem das atrações** (é a ordem do trajeto):
+- **Arraste pela alça ⋮⋮** à esquerda de cada atração. Funciona com o dedo no celular e com o mouse.
+- Ou abra a atração e use **↑ Subir / ↓ Descer**. Também dá para focar a alça e usar as setas do teclado.
+- O "Como chegar" da primeira atração passa a valer a partir da entrada do passeio. Os km e o trajeto se atualizam sozinhos.
+
 Com atrações cadastradas, o cartão do passeio mostra **🎟️ N atrações · ⭐ · 📏 km · tempo** (quando o trajeto já foi calculado). Ao tocar, abre os **Detalhes** do passeio:
 - O trajeto começa na **entrada do passeio** e passa pelas atrações localizadas na ordem da lista: só as ⭐ (se houver) ou **Todas**.
 - Cada trecho mostra o modo, o tempo e os **km**. No topo ficam o total de km e de deslocamento e os km por modo.
