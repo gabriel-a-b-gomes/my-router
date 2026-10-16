@@ -75,6 +75,16 @@ Cada passeio tem **duração esperada** (30 min até o dia inteiro). O dia mostr
 **Atrações do passeio:** no cartão do passeio, toque em **🎟️ Atrações** para abrir a lista com o nome e o preço por pessoa de cada atração (preço vazio = não sei; 0 = grátis). Toque na **⭐** nas que mais te interessam. O modal mostra a soma das ⭐ por pessoa e para o grupo, e o botão **Usar ⭐ como custo do passeio** coloca essa soma no custo.
 No cartão, as ⭐ viram um **checklist recolhido** ("⭐ Quero ver 1/3"): toque para abrir e marque o que já visitou.
 
+**Local e trajeto das atrações:** no modal, cada atração é uma linha com ⭐, nome, modo, local e preço. Toque nela para editar (uma por vez):
+- **🔎 Buscar local** (procura pelo nome perto do passeio e mostra até 5 resultados com a distância) ou **📍 Marcar no mapa** (o modal fecha, você toca no mapa e ele reabre).
+- **Como chegar** até ela, vindo da anterior: 🚶 A pé, 🚲 Bike, 🚗 Carro ou 🚐 Táxi/app. O padrão é a pé.
+
+Com atrações cadastradas, o cartão do passeio mostra **🎟️ N atrações · ⭐ · 📏 km · tempo** (quando o trajeto já foi calculado). Ao tocar, abre os **Detalhes** do passeio:
+- O trajeto começa na **entrada do passeio** e passa pelas atrações localizadas na ordem da lista: só as ⭐ (se houver) ou **Todas**.
+- Cada trecho mostra o modo, o tempo e os **km**. No topo ficam o total de km e de deslocamento e os km por modo.
+- O mapa mostra só o passeio, as atrações numeradas (⭐ em amarelo) e as rotas entre elas, e cada atração tem 🧭 para navegar até ela.
+- Esses km ficam só nos detalhes. Eles não entram no total de km nem no combustível da viagem.
+
 ### Modo "Hoje" (durante a viagem)
 Nos dias da viagem, o Roteiro já abre no **dia de hoje** com um cartão de destaque:
 - **Próxima parada**, com horário, duração e o tempo de deslocamento até lá.

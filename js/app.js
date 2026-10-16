@@ -35,6 +35,9 @@ const ui = {
   layers: loadLayers(), // camadas visíveis no mapa
   kmMode: loadPref('roteiro:kmMode') === '1', // mostra os km entre cada etapa do dia
   attrOpen: new Set(), // checklists de atrações abertos
+  attrRoutes: new Map(), // trajetos entre atrações (cache da sessão; as consultas ficam no cache de rotas)
+  detail: null, // passeio aberto em "Detalhes"
+  detailAll: false,
   resTab: ['passeios', 'restaurantes'].includes(loadPref('roteiro:resTab')) ? loadPref('roteiro:resTab') : 'custos', // abas do Resumo
   autoRoutes: loadPref('roteiro:autoRoutes') !== '0', // consulta rotas novas sozinho (com espera)
   editOpt: null, // opção de restaurante sendo editada no bloco Refeições
@@ -305,6 +308,7 @@ function route() {
     const t = getTrip(m[1]);
     if (ui.tripId !== m[1]) {
       ui.tripId = m[1];
+      ui.detail = null;
       // durante a viagem, o roteiro já abre no dia de hoje
       const ti = tripDays(t).indexOf(localToday());
       ui.day = ti >= 0 ? ti : 'all';
@@ -541,6 +545,11 @@ function renderPanel() {
   if (activeBind) panel.querySelector(`[data-bind="${CSS.escape(activeBind)}"]`)?.focus();
   updateMap();
   if (ui.tab === 'roteiro') ensureWeather(t);
+  if (ui.tab === 'roteiro' && ui.detail) {
+    const dp = t.places.find((x) => x.id === ui.detail);
+    if (dp) ensureAttrRoute(t, dp);
+    return; // nos detalhes, as rotas do dia não são consultadas
+  }
   // rotas: o que já está salvo aparece na hora; o que falta é consultado depois de uma pausa
   if (ui.tab === 'roteiro' && ui.day !== 'all') scheduleRoutes(t, [ui.day]);
   else if (ui.tab !== 'gastos') scheduleRoutes(t, tripDays(t).map((_, i) => i));
@@ -658,6 +667,8 @@ function keepChipInView(row, prevLeft) {
 let routeTimer = null;
 function scheduleRoutes(t, days) {
   days.forEach((i) => ensureRoute(t, i, { cacheOnly: true }));
+  const tours = (ui.tab === 'roteiro' && ui.day !== 'all') ? dayPlaces(t, ui.day).filter((p) => p.attractions?.length) : [];
+  tours.forEach((p) => ensureAttrRoute(t, p, { all: false, cacheOnly: true }));
   clearTimeout(routeTimer);
   if (!ui.autoRoutes) return;
   routeTimer = setTimeout(async () => {
@@ -665,6 +676,7 @@ function scheduleRoutes(t, days) {
       if (ui.tripId !== t.id) return;
       await ensureRoute(t, i);
     }
+    for (const p of tours) if (ui.tripId === t.id) await ensureAttrRoute(t, p, { all: false });
   }, 1500);
 }
 // quantos dias da viagem ainda estão sem rota calculada
@@ -682,6 +694,10 @@ const posOf = (obj, prefix) => {
 };
 function objOf(t, kind, id) {
   if (kind === 'new') return ui.np;
+  if (kind === 'attr') {
+    const [pid, aid] = id.split(':');
+    return t.places.find((x) => x.id === pid)?.attractions?.find((a) => a.id === aid);
+  }
   return ({ stay: t.stays, place: t.places, flight: t.flights, car: t.cars }[kind] || []).find((x) => x.id === id);
 }
 function setPos(obj, prefix, pos) {
@@ -695,6 +711,14 @@ function pickBanner() {
     <button class="btn small" data-action="pick-cancel">Cancelar</button></div>`;
 }
 
+function reopenAttrDialog() {
+  const id = ui.reopenAttr;
+  ui.reopenAttr = null;
+  const t = trip();
+  const p = id && t?.places.find((x) => x.id === id);
+  if (p) attractionsDialog(t, p);
+}
+
 function startPick(kind, id, prefix, label) {
   const t = trip();
   ui.pick = { kind, id, prefix, label };
@@ -702,12 +726,14 @@ function startPick(kind, id, prefix, label) {
     const obj = objOf(t, kind, id);
     if (obj) {
       setPos(obj, prefix, pos);
+      if (kind === 'attr') delete obj.addr;
       if (kind === 'new') obj.address = '';
       else save();
     }
     cancelPick();
     toast('Posição marcada.', 'ok');
     renderPanel();
+    reopenAttrDialog();
   });
   renderPanel();
   if (window.innerWidth < 900) window.scrollTo(0, 0);
@@ -857,6 +883,122 @@ function attractionChecklist(t, p) {
     </details>`;
 }
 
+// Trajeto dentro do passeio: entrada do passeio → atrações localizadas (as ⭐, se houver; senão todas).
+const ATTR_MODES = ['foot', 'bike', 'drive', 'transfer'];
+const ATTR_MODE_LABEL = { foot: '🚶 A pé', bike: '🚲 Bike', drive: '🚗 Carro', transfer: '🚐 Táxi/app' };
+function attrTour(p, all = ui.detailAll) {
+  const list = (p.attractions || []).filter((a) => hasPos(a));
+  const anyFav = list.some((a) => a.interest);
+  const stops = all || !anyFav ? list : list.filter((a) => a.interest);
+  const start = hasPos(p) ? [[p.lat, p.lng]] : [];
+  const points = [...start, ...stops.map((a) => [a.lat, a.lng])];
+  const cats = stops.slice(start.length ? 0 : 1).map((a) => (ATTR_MODES.includes(a.by) ? a.by : 'foot'));
+  const key = JSON.stringify([points, cats]);
+  return { stops, points, cats, key, hasStart: !!start.length, anyFav, route: ui.attrRoutes.get(key) };
+}
+const attrPending = new Set();
+async function ensureAttrRoute(t, p, { all = ui.detailAll, cacheOnly = false } = {}) {
+  const tour = attrTour(p, all);
+  if (tour.points.length < 2 || attrPending.has(tour.key)) return;
+  if (tour.route) { if (!all) keepTourStats(p, tour, tour.route); return; }
+  attrPending.add(tour.key);
+  try {
+    const cached = await chainCached(tour.points, tour.cats);
+    if (!cached && (cacheOnly || (!ui.autoRoutes && !ui.forceAttr))) return;
+    const run = () => routeChain(tour.points, tour.cats);
+    const r = cached ? await run() : await withMapBusy('Calculando o trajeto do passeio…', run);
+    ui.attrRoutes.set(tour.key, r);
+    if (r.warning) noteOnce(r.warning, 'warn');
+    const changed = !all && keepTourStats(p, tour, r);
+    if (ui.detail === p.id || (changed && ui.tab === 'roteiro' && !ui.detail)) renderPanel();
+  } catch (e) {
+    if (e.status !== 0) toast(`Trajeto do passeio: ${e.message}`, 'error');
+  } finally {
+    attrPending.delete(tour.key);
+    ui.forceAttr = false;
+  }
+}
+
+// km do trajeto entre as atrações (modo padrão: só as ⭐) guardado no passeio, para o cartão
+function keepTourStats(p, tour, r) {
+  const st = { key: tour.key, n: tour.stops.length, distance: Math.round(r.distance), duration: Math.round(r.duration), estimate: r.source === 'estimate' };
+  if (JSON.stringify(p.tourStats) === JSON.stringify(st)) return false;
+  p.tourStats = st;
+  save();
+  return true;
+}
+// Resumo do passeio no cartão: atrações e km entre elas (quando calculado). Abre os Detalhes.
+function tourChip(p) {
+  const list = p.attractions || [];
+  if (!list.length) return '';
+  const tour = attrTour(p, false);
+  const st = p.tourStats?.key === tour.key ? p.tourStats : null;
+  const fav = list.filter((a) => a.interest).length;
+  const parts = [`🎟️ ${list.length} atraç${list.length === 1 ? 'ão' : 'ões'}${fav ? ` · ⭐ ${fav}` : ''}`];
+  if (st) parts.push(`<b>📏 ${km(st.distance)}</b> · ${dur(st.duration)}${st.estimate ? ' (estimado)' : ''}`);
+  else if (tour.points.length > 1) parts.push('<span class="muted">trajeto não calculado</span>');
+  else parts.push('<span class="muted">sem locais</span>');
+  return `<button class="tour-chip" data-action="detail-open" data-id="${p.id}" title="Ver atrações, rotas e km entre elas">${parts.join(' · ')}<span class="tour-chip-go" aria-hidden="true">›</span></button>`;
+}
+
+// Painel "Detalhes do passeio": atrações na ordem, trechos com km e tempo, e o mapa só com elas.
+function detailPanel(t, p) {
+  const tour = attrTour(p);
+  const r = tour.route;
+  const c = t.currency;
+  const all = p.attractions || [];
+  const noPos = all.filter((a) => !hasPos(a));
+  const st = attractionTotals(p);
+  const i = p.day;
+  const legHtml = (k) => {
+    const cat = tour.cats[k];
+    const leg = r?.legs[k];
+    const ci = LEG_CATS[cat];
+    return `<li class="leg leg-${ci.group}">${ci.icon} ${leg ? `${dur(leg.duration)} · <b>${km(leg.distance)}</b>` : '<span class="muted">calculando…</span>'} <span class="muted">${ci.label}</span></li>`;
+  };
+  let k = 0;
+  const priceTxt = (a) => (a.price === '' || a.price == null ? '' : num(a.price) ? money(a.price, c) : 'grátis');
+  const byCat = r ? Object.entries(r.byCat).filter(([, v]) => v > 1).map(([cat, v]) => `<span class="chip">${LEG_CATS[cat].icon} ${km(v)}</span>`).join('') : '';
+  return `
+    <div class="detail-top">
+      <button class="btn small" data-action="detail-close">← Voltar${Number.isInteger(i) ? ` ao dia ${i + 1}` : ''}</button>
+      <button class="btn small ghost" data-action="attr-open" data-id="${p.id}">🎟️ Editar atrações</button>
+    </div>
+    <section class="card detail-card">
+      <div class="muted small">Detalhes do passeio</div>
+      <h2>${catIcon(p.category)} ${h(p.name)}</h2>
+      <div class="muted small">${placeMeta(p)}</div>
+      <div class="km-grid">
+        <div class="km-box"><span class="km-icon" aria-hidden="true">🎟️</span><b>${tour.stops.length}</b><span class="muted small">atraç${tour.stops.length === 1 ? 'ão' : 'ões'} no trajeto</span></div>
+        <div class="km-box"><span class="km-icon" aria-hidden="true">📏</span><b>${r ? km(r.distance) : '–'}</b><span class="muted small">${r ? `${dur(r.duration)} de deslocamento${r.source === 'estimate' ? ' (estimado)' : ''}` : tour.points.length > 1 ? (ui.autoRoutes ? 'calculando…' : 'rota não calculada') : 'entre as atrações'}</span></div>
+      </div>
+      ${byCat ? `<div class="chips">${byCat}</div>` : ''}
+      ${tour.anyFav ? `<div class="seg detail-seg" role="tablist">
+        <button class="${ui.detailAll ? '' : 'active'}" data-action="detail-all" data-all="0">⭐ Só as marcadas</button>
+        <button class="${ui.detailAll ? 'active' : ''}" data-action="detail-all" data-all="1">Todas</button>
+      </div>` : ''}
+      ${!r && tour.points.length > 1 && !ui.autoRoutes ? '<button class="btn small" data-action="attr-calc" data-id="' + p.id + '">Calcular trajeto</button>' : ''}
+    </section>
+    ${tour.points.length ? `
+    <ol class="stops">
+      ${tour.hasStart ? `<li class="anchor"><span class="anchor-icon" aria-hidden="true">${catIcon(p.category)}</span><span class="grow"><b>Entrada · ${h(p.name)}</b></span></li>` : ''}
+      ${tour.stops.map((a, idx) => `
+        ${tour.hasStart || idx > 0 ? legHtml(tour.hasStart ? idx : idx - 1) : ''}
+        <li class="card stop attr-stop ${a.done ? 'done' : ''}">
+          <div class="stop-head">
+            <span class="num ${a.interest ? 'num-fav' : ''}">${++k}</span>
+            <div class="grow"><b>${h(a.name || 'Sem nome')}</b>${a.interest ? ' <span class="fav-star" title="Marcada">★</span>' : ''}
+              <div class="muted small">${[priceTxt(a), a.done ? '✓ visitada' : ''].filter(Boolean).join(' · ')}</div></div>
+            <a class="icon small-icon" href="https://www.google.com/maps/dir/?api=1&destination=${a.lat},${a.lng}&travelmode=${GMAPS_MODE[tour.cats[tour.hasStart ? idx : idx - 1]] || 'walking'}" target="_blank" rel="noopener" title="Navegar até aqui" aria-label="Navegar até ${h(a.name)}">🧭</a>
+          </div>
+        </li>`).join('')}
+    </ol>` : ''}
+    ${!all.length ? '<div class="empty card">Este passeio ainda não tem atrações. Toque em "🎟️ Editar atrações" para adicionar.</div>' : ''}
+    ${noPos.length ? `<div class="hint">📍 ${noPos.length} atraç${noPos.length === 1 ? 'ão' : 'ões'} sem localização (${noPos.map((a) => h(a.name || 'sem nome')).join(', ')}). Abra <b>Editar atrações</b> e use 🔎 ou 📍 para entrar no trajeto.</div>` : ''}
+    ${!hasPos(p) && tour.stops.length ? '<div class="hint">O passeio está sem posição no mapa: o trajeto começa na primeira atração.</div>' : ''}
+    <p class="muted small">Os km entre as atrações aparecem aqui e não entram no total de km nem no combustível da viagem. ${st.fav ? `Marcadas: ⭐ ${st.fav} · ${money(st.favPP, c)}/pessoa.` : ''}</p>`;
+}
+
 // Modal com a lista completa: nome, preço por pessoa e ⭐ de interesse.
 function attractionsDialog(t, p) {
   p.attractions ||= [];
@@ -865,31 +1007,78 @@ function attractionsDialog(t, p) {
   dlg.id = 'attr-dialog';
   dlg.className = 'dialog dialog-wide';
   const n = Math.max(1, num(t.travelers));
-  const row = (a) => `
-    <li class="attr-row ${a.interest ? 'fav' : ''}" data-aid="${a.id}">
-      <button type="button" class="star" data-attr="star" aria-pressed="${!!a.interest}" title="Marcar como interesse">${a.interest ? '★' : '☆'}</button>
-      <input class="attr-name" data-attr="name" value="${h(a.name)}" placeholder="Nome da atração" aria-label="Nome">
-      <input class="attr-price" data-attr="price" inputmode="decimal" value="${a.price === '' || a.price == null ? '' : String(a.price).replace('.', ',')}" placeholder="R$/pessoa" aria-label="Preço por pessoa">
-      <button type="button" class="icon" data-attr="del" aria-label="Excluir">✕</button>
+  let openId = ui.attrEdit || null; // atração com a edição aberta (uma por vez)
+  ui.attrEdit = null;
+  const priceTxt = (a) => (a.price === '' || a.price == null ? '<span class="muted">—</span>' : num(a.price) ? money(a.price, t.currency) : 'grátis');
+  const priceVal = (a) => (a.price === '' || a.price == null ? '' : String(a.price).replace('.', ','));
+  const modeOf = (a) => (ATTR_MODES.includes(a.by) ? a.by : 'foot');
+  const meta = (a) => {
+    const m = LEG_CATS[modeOf(a)];
+    return `<span>${m.icon} ${ATTR_MODE_LABEL[modeOf(a)].split(' ').slice(1).join(' ')}</span>${hasPos(a) ? '<span class="attr-ok">📍 no mapa</span>' : '<span class="attr-warn">sem local</span>'}`;
+  };
+  const row = (a) => {
+    const idx = p.attractions.indexOf(a);
+    const open = a.id === openId;
+    return `
+    <li class="attr-item ${a.interest ? 'fav' : ''} ${open ? 'open' : ''}" data-aid="${a.id}">
+      <div class="attr-sum">
+        <button type="button" class="star" data-attr="star" aria-pressed="${!!a.interest}" title="${a.interest ? 'Desmarcar' : 'Marcar como interesse'}" aria-label="Interesse">${a.interest ? '★' : '☆'}</button>
+        <button type="button" class="attr-main" data-attr="toggle" aria-expanded="${open}">
+          <span class="attr-title">${h(a.name) || '<span class="muted">Sem nome</span>'}</span>
+          <span class="attr-meta">${meta(a)}</span>
+        </button>
+        <span class="attr-price-tag">${priceTxt(a)}</span>
+        <button type="button" class="icon small-icon ${open ? 'done-icon' : ''}" data-attr="toggle" aria-label="${open ? 'Concluir' : 'Editar'} ${h(a.name)}" title="${open ? 'Concluir' : 'Editar'}">${open ? '✓' : '✎'}</button>
+      </div>
+      ${open ? `
+      <div class="attr-edit">
+        <div class="attr-edit-grid">
+          <label>Nome<input data-attr="name" value="${h(a.name)}" placeholder="Nome da atração"></label>
+          <label>Preço por pessoa<input data-attr="price" inputmode="decimal" value="${priceVal(a)}" placeholder="vazio = não sei · 0 = grátis"></label>
+        </div>
+        <div class="attr-field">
+          <span class="attr-label">Como chegar ${idx === 0 ? '(saindo da entrada do passeio)' : '(vindo da anterior)'}</span>
+          <div class="seg attr-modes" role="radiogroup">
+            ${ATTR_MODES.map((m) => `<button type="button" class="${modeOf(a) === m ? 'active' : ''}" data-attr="mode" data-mode="${m}" role="radio" aria-checked="${modeOf(a) === m}">${ATTR_MODE_LABEL[m]}</button>`).join('')}
+          </div>
+        </div>
+        <div class="attr-field">
+          <span class="attr-label">Local</span>
+          <div class="attr-loc">
+            <span class="attr-loc-txt">${hasPos(a) ? `📍 ${h(a.addr || 'Marcado no mapa')}` : '<span class="muted">Ainda sem local</span>'}</span>
+            <button type="button" class="btn small" data-attr="search">🔎 Buscar</button>
+            <button type="button" class="btn small" data-attr="pin">📍 No mapa</button>
+          </div>
+          <div class="attr-results"></div>
+        </div>
+        <div class="edit-foot">
+          <button type="button" class="link small danger" data-attr="del">Excluir atração</button>
+          <button type="button" class="btn primary small" data-attr="toggle">✓ Concluir</button>
+        </div>
+      </div>` : ''}
     </li>`;
+  };
   const totals = () => {
     const st = attractionTotals(p);
     return `<div><b>⭐ ${st.fav}</b> de ${st.count} marcadas · <b>${money(st.favPP, t.currency)}</b>/pessoa${n > 1 ? ` · <b>${money(st.favPP * n, t.currency)}</b> para ${n}` : ''}</div>
-      <div class="muted small">Todas: ${money(st.allPP, t.currency)}/pessoa</div>`;
+      <div class="muted small">Todas: ${money(st.allPP, t.currency)}/pessoa · ${p.attractions.filter(hasPos).length} de ${st.count} com local</div>`;
   };
   dlg.innerHTML = `
     <form method="dialog" class="dialog-body">
-      <h2>🎟️ Atrações · ${h(p.name)}</h2>
-      <p class="muted small">Toque na ⭐ para marcar as que mais te interessam — elas viram um checklist no cartão do passeio. Preço por pessoa; deixe vazio se não souber e 0 se for grátis.</p>
+      <div class="attr-dlg-head">
+        <h2>🎟️ Atrações</h2>
+        <span class="muted small">${h(p.name)}</span>
+      </div>
+      <p class="muted small">⭐ marca as que mais te interessam. Toque numa atração para editar preço, local e como chegar até ela.</p>
       <ul class="attr-list">${p.attractions.map(row).join('')}</ul>
       <div class="attr-add">
         <input data-new="name" placeholder="Nova atração" aria-label="Nova atração">
         <input data-new="price" inputmode="decimal" placeholder="R$/pessoa" aria-label="Preço da nova atração">
-        <button type="button" class="btn primary" data-attr="add">＋</button>
+        <button type="button" class="btn primary" data-attr="add" aria-label="Adicionar">＋</button>
       </div>
       <div class="attr-totals">${totals()}</div>
       <div class="dialog-actions">
-        <button type="button" class="btn ghost" data-attr="use-cost" title="Coloca a soma das ⭐ como custo do passeio">Usar ⭐ como custo do passeio</button>
+        <button type="button" class="btn ghost" data-attr="use-cost" title="Coloca a soma das ⭐ como custo do passeio">Usar ⭐ como custo</button>
         <button class="btn primary" value="ok">Pronto</button>
       </div>
     </form>`;
@@ -897,11 +1086,20 @@ function attractionsDialog(t, p) {
   const list = dlg.querySelector('.attr-list');
   const refresh = () => { dlg.querySelector('.attr-totals').innerHTML = totals(); save(); };
   const find = (el) => p.attractions.find((a) => a.id === el.closest('[data-aid]')?.dataset.aid);
+  const liOf = (a) => list.querySelector(`[data-aid="${a.id}"]`);
+  const redraw = (a) => { const li = liOf(a); if (li) li.outerHTML = row(a); };
+  const setOpen = (id) => {
+    const prev = p.attractions.find((x) => x.id === openId);
+    openId = id;
+    if (prev) redraw(prev);
+    const cur = p.attractions.find((x) => x.id === id);
+    if (cur) { redraw(cur); liOf(cur)?.scrollIntoView({ block: 'nearest' }); }
+  };
   const parsePrice = (v) => { const x = String(v).trim(); return x === '' ? '' : num(x.includes(',') ? x.replace(/\./g, '').replace(',', '.') : x); };
   const add = () => {
     const ni = dlg.querySelector('[data-new=name]'), pi = dlg.querySelector('[data-new=price]');
     if (!ni.value.trim()) { ni.focus(); return; }
-    const a = { id: uid(), name: ni.value.trim(), price: parsePrice(pi.value), interest: false, done: false };
+    const a = { id: uid(), name: ni.value.trim(), price: parsePrice(pi.value), interest: false, done: false, by: 'foot' };
     p.attractions.push(a);
     list.insertAdjacentHTML('beforeend', row(a));
     ni.value = ''; pi.value = ''; ni.focus();
@@ -909,34 +1107,81 @@ function attractionsDialog(t, p) {
   };
   dlg.addEventListener('input', (e) => {
     const a = find(e.target);
-    if (!a) return;
-    if (e.target.dataset.attr === 'name') a.name = e.target.value;
-    if (e.target.dataset.attr === 'price') a.price = parsePrice(e.target.value);
+    const f = e.target.dataset.attr;
+    if (!a || (f !== 'name' && f !== 'price')) return;
+    if (f === 'name') {
+      a.name = e.target.value;
+      liOf(a).querySelector('.attr-title').textContent = a.name || 'Sem nome';
+    } else {
+      a.price = parsePrice(e.target.value);
+      liOf(a).querySelector('.attr-price-tag').innerHTML = priceTxt(a);
+    }
     refresh();
   });
   dlg.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.dataset.new) { e.preventDefault(); add(); }
-    else if (e.key === 'Enter' && e.target.dataset.attr) e.preventDefault();
+    else if (e.key === 'Enter' && e.target.dataset.attr) { e.preventDefault(); setOpen(null); }
   });
   dlg.addEventListener('click', async (e) => {
     if (e.target === dlg) return dlg.close();
     const b = e.target.closest('[data-attr]');
     const kind = b?.dataset.attr;
     if (kind === 'add') return add();
+    const a = b && find(b);
+    if (kind === 'toggle') return setOpen(openId === a.id ? null : a.id);
     if (kind === 'star') {
-      const a = find(b);
       a.interest = !a.interest;
       if (!a.interest) a.done = false;
-      b.textContent = a.interest ? '★' : '☆';
-      b.setAttribute('aria-pressed', a.interest);
-      b.closest('li').classList.toggle('fav', a.interest);
+      redraw(a);
       return refresh();
     }
+    if (kind === 'mode') {
+      a.by = b.dataset.mode;
+      redraw(a);
+      return save();
+    }
     if (kind === 'del') {
-      const a = find(b);
+      if (!await confirmInline(b, 'Excluir?')) return;
       p.attractions = p.attractions.filter((x) => x !== a);
-      b.closest('li').remove();
+      liOf(a)?.remove();
+      openId = null;
       return refresh();
+    }
+    if (kind === 'search') {
+      const li = liOf(a);
+      const box = li.querySelector('.attr-results');
+      if (!a.name?.trim()) { li.querySelector('[data-attr=name]')?.focus(); return; }
+      b.disabled = true;
+      box.innerHTML = '<span class="muted small"><span class="spin-sm"></span> Procurando…</span>';
+      try {
+        const near = hasPos(p) ? { lat: p.lat, lng: p.lng } : t.center;
+        let r = await geocode(a.name, near);
+        if (!r.results.length) r = await geocode(`${a.name}, ${p.name}`, near);
+        box.innerHTML = r.results.length
+          ? r.results.slice(0, 5).map((x, k) => `<button type="button" class="geo-result" data-attr="use-result" data-k="${k}"><span class="grow"><b>${h(x.name)}</b><span class="muted small">${h(x.address || '')}</span></span><span class="muted small">${hasPos(p) ? km(haversineKm(p, x) * 1000) : ''}</span></button>`).join('')
+          : '<span class="muted small">Nada encontrado. Use 📍 No mapa.</span>';
+        box._results = r.results;
+      } catch (err) {
+        box.innerHTML = `<span class="error small">${h(err.message)}</span>`;
+      } finally {
+        b.disabled = false;
+      }
+      return;
+    }
+    if (kind === 'use-result') {
+      const x = liOf(a).querySelector('.attr-results')._results?.[Number(b.dataset.k)];
+      if (!x) return;
+      a.lat = x.lat; a.lng = x.lng; a.addr = x.name;
+      redraw(a);
+      return refresh();
+    }
+    if (kind === 'pin') {
+      // fecha o modal, marca no mapa e reabre o modal com esta atração aberta
+      ui.reopenAttr = p.id;
+      ui.attrEdit = a.id;
+      dlg.close();
+      startPick('attr', `${p.id}:${a.id}`, '', a.name || 'a atração');
+      return;
     }
     if (kind === 'use-cost') {
       const st = attractionTotals(p);
@@ -947,13 +1192,25 @@ function attractionsDialog(t, p) {
   });
   dlg.addEventListener('close', () => { setTimeout(() => dlg.remove(), 200); renderPanel(); });
   dlg.showModal();
-  if (!p.attractions.length) dlg.querySelector('[data-new=name]').focus();
+  if (openId) liOf(p.attractions.find((x) => x.id === openId) || {})?.scrollIntoView?.({ block: 'nearest' });
+  else if (!p.attractions.length) dlg.querySelector('[data-new=name]').focus();
+}
+
+// Confirmação rápida dentro do próprio botão (1º toque arma, 2º confirma) — evita abrir outro modal.
+function confirmInline(btn, label) {
+  if (btn.dataset.armed) return Promise.resolve(true);
+  const old = btn.textContent;
+  btn.dataset.armed = '1';
+  btn.textContent = label;
+  btn.classList.add('armed');
+  setTimeout(() => { if (btn.isConnected) { delete btn.dataset.armed; btn.textContent = old; btn.classList.remove('armed'); } }, 2500);
+  return Promise.resolve(false);
 }
 
 function placeAlternatives(t, p) {
   const others = groupOf(t.places, p).filter((x) => x !== p);
   if (!others.length) return '';
-  return `<div class="alt-chips"><span class="muted small">Alternativas:</span>
+  return `<div class="alt-chips"><span class="muted small full-width">Alternativas:</span>
     ${others.map((x) => {
       const diff = placeCost(t, x) - placeCost(t, p);
       return `<span class="alt-chip"><b>${h(x.name)}</b>${num(x.duration) ? ` <span class="muted">${fmtDuration(x.duration)}</span>` : ''}
@@ -1063,17 +1320,13 @@ function mealsBlock(t, i, rf) {
 function optEditPanel(t, p) {
   return `
     <li class="opt-edit" id="opt-edit-${p.id}">
-      <div class="opt-edit-head">
-        <span class="opt-edit-tag">✎ Editando</span>
-        <button class="link small" data-action="opt-edit" data-id="${p.id}">Fechar ✕</button>
-      </div>
       <label>Nome<input data-bind="place:${p.id}.name" value="${h(p.name)}" placeholder="Nome do restaurante"></label>
       ${foodFields(t, p)}
-      <input class="note" placeholder="Anotação (prato, reserva, link…)" data-bind="place:${p.id}.note" value="${h(p.note)}">
-      <div class="opt-edit-foot">
-        <button class="link small" data-action="pick" data-kind="place" data-id="${p.id}" data-prefix="" data-label="${h(p.name)}">📍 ${hasPos(p) ? 'Ajustar no mapa' : 'Marcar no mapa'}</button>
+      <label>Anotação<input class="note" placeholder="Prato, reserva, link…" data-bind="place:${p.id}.note" value="${h(p.note)}"></label>
+      <div class="edit-foot">
         <button class="link small danger" data-action="remove-place" data-id="${p.id}">Remover</button>
-        <button class="btn primary small push-right" data-action="opt-edit" data-id="${p.id}">✓ Concluir</button>
+        <button class="link small" data-action="pick" data-kind="place" data-id="${p.id}" data-prefix="" data-label="${h(p.name)}">📍 ${hasPos(p) ? 'Ajustar no mapa' : 'Marcar no mapa'}</button>
+        <button class="btn primary small" data-action="opt-edit" data-id="${p.id}">✓ Concluir</button>
       </div>
     </li>`;
 }
@@ -1095,6 +1348,11 @@ function panelRoteiro(t) {
     return `<div class="empty card">Defina as datas da viagem na aba <a href="#/t/${t.id}/reservas">Reservas</a> para montar o roteiro.</div>`;
   }
   if (ui.day !== 'all' && ui.day >= days.length) ui.day = 'all';
+  if (ui.detail) {
+    const dp = t.places.find((x) => x.id === ui.detail);
+    if (dp) return detailPanel(t, dp);
+    ui.detail = null;
+  }
   const unplanned = t.places.filter((p) => isActive(p) && (p.day == null || p.day >= days.length));
   const hasCar = act(t.cars).length > 0;
 
@@ -1203,16 +1461,16 @@ function panelRoteiro(t) {
                 <button class="icon" data-action="move" data-id="${p.id}" data-dir="1" ${k === ps.length - 1 ? 'disabled' : ''} aria-label="Descer">↓</button>
               </div>
             </div>
+            ${p.category === 'comida' ? '' : `<label class="stop-day">Dia${daySelect(t, p.day, `data-bind="place:${p.id}.day" data-rerender`)}</label>`}
             <div class="stop-fields">
               <label>Horário<input type="time" data-bind="place:${p.id}.time" data-rerender value="${h(p.time)}"></label>
               ${p.category === 'comida' ? '' : `
               <label>Duração${durationSelect(`data-bind="place:${p.id}.duration" data-type="number" data-rerender`, p.duration)}</label>
               <label>Custo (${h(t.currency)})<input inputmode="decimal" data-bind="place:${p.id}.cost" data-type="number" data-rerender value="${dec(p.cost)}" placeholder="0"></label>`}
               <label>Tipo<select data-bind="place:${p.id}.category" data-rerender>${opts(CATEGORIES, p.category)}</select></label>
-              ${p.category === 'comida' ? '' : `<label>Dia${daySelect(t, p.day, `data-bind="place:${p.id}.day" data-rerender`)}</label>`}
             </div>
-            ${p.category === 'comida' ? foodFields(t, p) : ''}
-            <input class="note" placeholder="Anotação" data-bind="place:${p.id}.note" value="${h(p.note)}">
+            ${p.category === 'comida' ? foodFields(t, p) : tourChip(p)}
+            <label>Anotação<input class="note" placeholder="Anotação" data-bind="place:${p.id}.note" value="${h(p.note)}"></label>
             <div class="row wrap small">
               <button class="link" data-action="pick" data-kind="place" data-id="${p.id}" data-prefix="" data-label="${h(p.name)}">📍 ${hasPos(p) ? 'Ajustar no mapa' : 'Marcar no mapa'}</button>
               ${hasPos(p) ? `<a href="https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lng}#map=17/${p.lat}/${p.lng}" target="_blank" rel="noopener">Abrir no mapa</a>` : ''}
@@ -1264,6 +1522,45 @@ function panelRoteiro(t) {
   return dayChips + today + toolbar + body + unplannedHtml;
 }
 
+// Rota de uma sequência de pontos com o modo de cada trecho (cats[k] = trecho k → k+1).
+// Trechos seguidos do mesmo tipo viram uma consulta só; tudo passa pelo cache de rotas.
+function chainGroups(cats) {
+  const groups = [];
+  cats.forEach((cat, k) => {
+    const g = groups[groups.length - 1];
+    if (g && g.cat === cat) g.end = k + 1;
+    else groups.push({ cat, start: k, end: k + 1 });
+  });
+  return groups;
+}
+async function chainCached(points, cats) {
+  const hits = await Promise.all(chainGroups(cats).map((g) => getRoute(points.slice(g.start, g.end + 1), LEG_CATS[g.cat].profile, { cacheOnly: true })));
+  return hits.every(Boolean);
+}
+async function routeChain(points, cats) {
+  const out = { legs: [], lines: [], distance: 0, duration: 0, byCat: {}, source: 'route', warning: '', note: '' };
+  for (const g of chainGroups(cats)) {
+    const pts = points.slice(g.start, g.end + 1);
+    const r = await getRoute(pts, LEG_CATS[g.cat].profile);
+    // proteção: sem a distância de cada trecho, reparte o total pela linha reta entre as paradas
+    let legs = r.legs || [];
+    if (legs.length !== pts.length - 1) {
+      const straight = pts.slice(1).map((p, k) => haversineKm({ lat: pts[k][0], lng: pts[k][1] }, { lat: p[0], lng: p[1] }));
+      const sum = straight.reduce((a, b) => a + b, 0) || 1;
+      legs = straight.map((d) => ({ distance: (r.distance * d) / sum, duration: (r.duration * d) / sum }));
+    }
+    legs.forEach((leg) => out.legs.push({ ...leg, cat: g.cat }));
+    out.lines.push({ points: r.line, cat: g.cat, estimate: r.source === 'estimate' });
+    out.distance += r.distance;
+    out.duration += r.duration;
+    out.byCat[g.cat] = (out.byCat[g.cat] || 0) + r.distance;
+    if (r.source === 'estimate') out.source = 'estimate';
+    if (r.warning) out.warning = r.warning;
+    if (r.note) out.note = r.note;
+  }
+  return out;
+}
+
 // Busca as rotas do dia (com cache): trechos seguidos do mesmo tipo viram uma consulta.
 const pending = new Set();
 async function ensureRoute(t, i, { cacheOnly = false } = {}) {
@@ -1273,43 +1570,12 @@ async function ensureRoute(t, i, { cacheOnly = false } = {}) {
     return;
   }
   if (rf.route || pending.has(rf.key)) return;
-  const groups = [];
-  rf.legs.forEach((l, k) => {
-    const g = groups[groups.length - 1];
-    if (g && g.cat === l.cat) g.end = k + 1;
-    else groups.push({ cat: l.cat, start: k, end: k + 1 });
-  });
-  const gPts = (g) => rf.points.slice(g.start, g.end + 1);
-  if (cacheOnly) {
-    // só monta o dia se TODOS os trechos já estiverem no cache (nenhuma consulta ao servidor)
-    const hits = await Promise.all(groups.map((g) => getRoute(gPts(g), LEG_CATS[g.cat].profile, { cacheOnly: true })));
-    if (hits.some((x) => !x) || ui.routes.has(rf.key)) return;
-  }
+  const cats = rf.legs.map((l) => l.cat);
+  if (cacheOnly && !(await chainCached(rf.points, cats))) return; // só monta o dia se tudo já estiver no cache
+  if (cacheOnly && ui.routes.has(rf.key)) return;
   pending.add(rf.key);
   try {
-    const run = async () => {
-      const out = { legs: [], lines: [], distance: 0, duration: 0, byCat: {}, source: 'route', warning: '', note: '' };
-      for (const g of groups) {
-        const pts = gPts(g);
-        const r = await getRoute(pts, LEG_CATS[g.cat].profile);
-        // proteção: sem a distância de cada trecho, reparte o total pela linha reta entre as paradas
-        let legs = r.legs || [];
-        if (legs.length !== pts.length - 1) {
-          const straight = pts.slice(1).map((p, k) => haversineKm({ lat: pts[k][0], lng: pts[k][1] }, { lat: p[0], lng: p[1] }));
-          const sum = straight.reduce((a, b) => a + b, 0) || 1;
-          legs = straight.map((d) => ({ distance: (r.distance * d) / sum, duration: (r.duration * d) / sum }));
-        }
-        legs.forEach((leg) => out.legs.push({ ...leg, cat: g.cat }));
-        out.lines.push({ points: r.line, cat: g.cat, estimate: r.source === 'estimate' });
-        out.distance += r.distance;
-        out.duration += r.duration;
-        out.byCat[g.cat] = (out.byCat[g.cat] || 0) + r.distance;
-        if (r.source === 'estimate') out.source = 'estimate';
-        if (r.warning) out.warning = r.warning;
-        if (r.note) out.note = r.note;
-      }
-      return out;
-    };
+    const run = () => routeChain(rf.points, cats);
     const result = cacheOnly ? await run() : await withMapBusy('Calculando rotas…', run);
     ui.routes.set(rf.key, result);
     if (result.warning) noteOnce(result.warning, 'warn');
@@ -1402,9 +1668,9 @@ function panelGastos(t) {
 }
 
 // ---------------------------------------------------------------- aba Reservas
-const inp = (bind, label, value, type = 'text', extra = '') => {
+const inp = (bind, label, value, type = 'text', extra = '', labelclass = '') => {
   const isNum = type === 'number';
-  return `<label>${label}<input type="${isNum ? 'text' : type}" ${isNum ? 'inputmode="decimal" data-type="number"' : ''} data-bind="${bind}" value="${h(isNum ? dec(value) : value ?? '')}" ${isNum ? 'placeholder="0"' : ''} ${extra}></label>`;
+  return `<label class="${labelclass ?? 'lbl'}">${label}<input type="${isNum ? 'text' : type}" ${isNum ? 'inputmode="decimal" data-type="number"' : ''} data-bind="${bind}" value="${h(isNum ? dec(value) : value ?? '')}" ${isNum ? 'placeholder="0"' : ''} ${extra}></label>`;
 };
 
 function editBlock(key, summaryText, inner, forceOpen) {
@@ -1462,10 +1728,10 @@ function stayCard(t, s) {
       ${editBlock(`stay-${s.id}`, 'Editar hospedagem', `
         <div class="form-grid">
           ${inp(`stay:${s.id}.name`, 'Nome', s.name, 'text', 'data-rerender')}
-          ${inp(`stay:${s.id}.code`, 'Nº da reserva', s.code)}
+          ${inp(`stay:${s.id}.price`, `Preço total (${t.currency})`, s.price, 'number', 'data-rerender')}
           ${inp(`stay:${s.id}.checkin`, 'Check-in', s.checkin, 'date', 'data-rerender')}
           ${inp(`stay:${s.id}.checkout`, 'Check-out', s.checkout, 'date', 'data-rerender')}
-          ${inp(`stay:${s.id}.price`, `Preço total (${t.currency})`, s.price, 'number', 'data-rerender')}
+          ${inp(`stay:${s.id}.code`, 'Nº da reserva', s.code)}
           <span></span>
           ${addressField(t, 'stay', s, '', 'Endereço', 'Rua, número, cidade')}
         </div>
@@ -1571,8 +1837,8 @@ function panelReservas(t) {
     <section class="card">
       <h2>Viagem</h2>
       <div class="form-grid">
-        ${inp('trip.name', 'Nome', t.name, 'text', 'data-header')}
-        <label>Destino
+        ${inp('trip.name', 'Nome', t.name, 'text', 'data-header', 'span2')}
+        <label class="span2">Destino
           <span class="input-with-btn">
             <input data-bind="trip.destination" data-header data-rerender value="${h(t.destination)}">
             <button class="icon ibig" data-action="locate-dest" title="Localizar no mapa" aria-label="Localizar destino no mapa" ${ui.busy.dest ? 'disabled' : ''}>${ui.busy.dest ? '<span class="spin-sm"></span>' : hasPos(t.center) ? '✅' : '📍'}</button>
@@ -1589,8 +1855,8 @@ function panelReservas(t) {
         ${inp('trip.almocoBudget', 'Almoço por pessoa', t.almocoBudget, 'number')}
         ${inp('trip.jantarBudget', 'Jantar por pessoa', t.jantarBudget, 'number')}
         ${inp('trip.dailyFood', 'Lanches e extras por dia', t.dailyFood, 'number')}
-        ${inp('trip.dailyTransport', t.cars.length ? 'Transporte local (dias sem carro)' : 'Transporte local por dia', t.dailyTransport, 'number')}
         ${inp('trip.shoppingBudget', 'Compras (total da viagem)', t.shoppingBudget, 'number')}
+        ${inp('trip.dailyTransport', t.cars.length ? 'Transporte local (dias sem carro)' : 'Transporte local por dia', t.dailyTransport, 'number')}
       </div>
     </section>
 
@@ -2018,7 +2284,20 @@ function updateMap() {
     }
   };
 
-  if (ui.tab === 'resumo' && ui.resTab !== 'custos') {
+  const dp = ui.tab === 'roteiro' && (ui.detail || (ui.pick?.kind === 'attr' && ui.pick.id.split(':')[0]));
+  const detailPlace = dp && t.places.find((x) => x.id === dp);
+  if (detailPlace) {
+    // Detalhes do passeio (ou marcando uma atração): só o passeio, as atrações e o trajeto entre elas
+    const p = detailPlace;
+    const tour = attrTour(p);
+    fitKey += `|detail|${p.id}|${tour.stops.length}`;
+    if (hasPos(p)) markers.push({ lat: p.lat, lng: p.lng, label: catIcon(p.category), color: '#0d3b4f', cls: 'stay', z: 900, popup: placePopup(p, '<br>Entrada do passeio') });
+    tour.stops.forEach((a, k) => markers.push({ lat: a.lat, lng: a.lng, label: k + 1, color: a.interest ? '#e0a024' : '#128c8c', z: 1000, popup: `<b>${h(a.name)}</b>${a.interest ? ' ★' : ''}` }));
+    // atrações localizadas fora do trajeto (ex.: não marcadas com ⭐): pontos pequenos
+    (p.attractions || []).filter((a) => hasPos(a) && !tour.stops.includes(a)).forEach((a) => markers.push({ lat: a.lat, lng: a.lng, label: '', color: '#6b7280', cls: 'small', nofit: true, popup: `<b>${h(a.name)}</b><br>fora do trajeto` }));
+    if (tour.route) for (const l of tour.route.lines) lines.push({ points: l.points, ...lineStyle(l.cat, '#128c8c', l.estimate) });
+    else tour.cats.forEach((cat, k) => lines.push({ points: [tour.points[k], tour.points[k + 1]], ...lineStyle(cat, '#128c8c', true) }));
+  } else if (ui.tab === 'resumo' && ui.resTab !== 'custos') {
     // Resumo → Passeios / Restaurantes: só esses lugares, numerados como na lista, sem rotas
     fitKey += `|${ui.resTab}`;
     chosenPlaces(t, ui.resTab).forEach(({ p, i }, k) => {
@@ -2255,6 +2534,7 @@ document.addEventListener('click', async (e) => {
     case 'export':
       return exportBackup();
     case 'day':
+      ui.detail = null;
       ui.day = el.dataset.day === 'all' ? 'all' : Number(el.dataset.day);
       if (ui.np.open && ui.np.day == null && ui.day !== 'all') ui.np.day = ui.day;
       renderPanel();
@@ -2275,6 +2555,25 @@ document.addEventListener('click', async (e) => {
       ps.sort((a, b) => (a.time || '99').localeCompare(b.time || '99')).forEach((p, n) => (p.order = n));
       save();
       return renderPanel();
+    }
+    case 'detail-open':
+      ui.detail = el.dataset.id;
+      ui.detailAll = false;
+      renderPanel();
+      document.getElementById('panel')?.scrollTo?.(0, 0);
+      if (window.innerWidth < 900) window.scrollTo(0, 0);
+      return;
+    case 'detail-close':
+      ui.detail = null;
+      return renderPanel();
+    case 'detail-all':
+      ui.detailAll = el.dataset.all === '1';
+      return renderPanel();
+    case 'attr-calc': {
+      const p = t.places.find((x) => x.id === el.dataset.id);
+      ui.forceAttr = true;
+      if (p) ensureAttrRoute(t, p);
+      return;
     }
     case 'today-done': {
       const p = t.places.find((x) => x.id === el.dataset.id);
@@ -2581,7 +2880,8 @@ document.addEventListener('click', async (e) => {
       return startPick(el.dataset.kind, el.dataset.id, el.dataset.prefix || '', el.dataset.label || 'o local');
     case 'pick-cancel':
       cancelPick();
-      return renderPanel();
+      renderPanel();
+      return reopenAttrDialog();
     case 'locate': {
       const { kind, id, prefix = '' } = el.dataset;
       return withBusy(`loc-${kind}-${id}-${prefix}`, async () => {
