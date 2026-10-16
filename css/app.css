@@ -670,7 +670,7 @@ label.check small { color: var(--muted); font-weight: 400; font-size: .8rem; lin
 .alt-row { margin: -.35rem 0 .75rem .2rem; }
 .opt-group .alt-row { margin: 0 .2rem; }
 .alt-chips { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; padding-top: .4rem; border-top: 1px dashed var(--border); }
-.alt-chip { display: inline-flex; align-items: center; gap: .4rem; padding: .3rem .3rem .3rem .65rem; border-radius: 999px; background: var(--surface-2); font-size: .85rem; }
+.alt-chip { display: inline-flex; align-items: center; gap: .4rem; padding: .3rem .4rem .3rem .65rem; border-radius: var(--r-md); background: var(--surface-2); font-size: .85rem; }
 .alt-chip .btn { padding: .3rem .6rem; }
 .scn-list { display: flex; flex-direction: column; gap: .5rem; }
 .scn { border: 1px solid var(--border); border-radius: var(--r-md); padding: .75rem .85rem; display: flex; flex-direction: column; gap: .4rem; }
