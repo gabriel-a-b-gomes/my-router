@@ -112,7 +112,9 @@ export function attractionTotals(p) {
   return { count: list.length, fav: fav.length, done: fav.filter((a) => a.done).length, favPP: sum(fav), allPP: sum(list) };
 }
 
-export const dayPlaces = (trip, i) => act(trip.places).filter((p) => p.day === i && !isOption(p)).sort((a, b) => a.order - b.order);
+// Passeio desativado (p.disabled) fica guardado, mas sai do roteiro, das rotas, dos custos e do mapa.
+export const dayPlaces = (trip, i) => act(trip.places).filter((p) => p.day === i && !isOption(p) && !p.disabled).sort((a, b) => a.order - b.order);
+export const disabledPlaces = (trip, i) => act(trip.places).filter((p) => p.disabled && (i == null || p.day === i));
 
 // Durações sugeridas para passeios (minutos)
 export const DURATIONS = [[30, '30 min'], [60, '1 h'], [90, '1h30'], [120, '2 h'], [180, '3 h'], [240, '4 h'], [300, '5 h'], [360, 'Meio dia (6 h)'], [480, 'Dia inteiro (8 h)']];

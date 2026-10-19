@@ -4,7 +4,7 @@ import {
   sumAmount, tripSummary, newTrip, flightLeg, carRental, carKm, computedDailies, LEG_CATS, flightKm, flightEnds,
   greatCircle, dayKm, pickupAfterFlight, returnBeforeFlight, haversineKm, MEALS, PRICE_TAGS, FOOD_STYLES,
   mealPlan, placeCost, DURATIONS, fmtDuration, isActive, act, groupOf, currentChoices, applyChoices, sameChoices, simulate,
-  ensurePackages, activePackage, switchPackage, clonePackageData, packageCost, packageData, nightStay, morningStay,
+  ensurePackages, activePackage, switchPackage, clonePackageData, packageCost, packageData, nightStay, morningStay, disabledPlaces,
 } from './util.js';
 import { forecastAt, fetchForecast, inRange } from './weather.js';
 import { api, getPassword, setPassword, geocode, getRoute, forgetEstimates } from './api.js';
@@ -941,6 +941,22 @@ function tourChip(p) {
   return `<button class="tour-chip" data-action="detail-open" data-id="${p.id}" title="Ver atrações, rotas e km entre elas">${parts.join(' · ')}<span class="tour-chip-go" aria-hidden="true">›</span></button>`;
 }
 
+// Passeios desativados: recolhidos, com Reativar (volta para o mesmo dia e posição) e Remover.
+function disabledList(t, list) {
+  if (!list.length) return '';
+  return `
+    <details class="off-list" ${ui.offOpen ? 'open' : ''} data-off-list>
+      <summary>⏸ ${list.length} passeio${list.length > 1 ? 's' : ''} desativado${list.length > 1 ? 's' : ''}</summary>
+      <ul>${list.map((p) => `
+        <li>
+          <span class="grow"><b>${h(p.name)}</b><span class="muted small">${placeMeta(p)}</span></span>
+          <button class="btn small" data-action="place-enable" data-id="${p.id}">▶ Reativar</button>
+          <button class="icon small-icon danger" data-action="remove-place" data-id="${p.id}" aria-label="Remover ${h(p.name)}" title="Remover de vez">✕</button>
+        </li>`).join('')}</ul>
+      <p class="muted small">Desativados não entram no roteiro, na rota, nos custos nem no mapa.</p>
+    </details>`;
+}
+
 // Painel "Detalhes do passeio": atrações na ordem, trechos com km e tempo, e o mapa só com elas.
 function detailPanel(t, p) {
   const tour = attrTour(p);
@@ -1433,7 +1449,7 @@ function panelRoteiro(t) {
     if (dp) return detailPanel(t, dp);
     ui.detail = null;
   }
-  const unplanned = t.places.filter((p) => isActive(p) && (p.day == null || p.day >= days.length));
+  const unplanned = t.places.filter((p) => isActive(p) && !p.disabled && (p.day == null || p.day >= days.length));
   const hasCar = act(t.cars).length > 0;
 
   const dayChips = `
@@ -1515,6 +1531,13 @@ function panelRoteiro(t) {
     const timeNote = (owner) => {
       if (owner === 'pickup' && car?.pickupAt) return ` <span class="muted">${fmtTime(car.pickupAt)}${rf.afterFlight ? ' · logo após o desembarque' : ''}</span>`;
       if (owner === 'return' && car?.returnAt) return ` <span class="muted">${fmtTime(car.returnAt)}${rf.beforeFlight ? ' · depois segue para o aeroporto' : ''}</span>`;
+      // hotel: check-out no início do dia de saída; check-in e chegada prevista no fim do dia de entrada
+      const ms = morningStay(t, date), ns = nightStay(t, date);
+      if (owner === 'start' && ms && ms.checkout === date && ms.checkoutTime && rf.start?.icon === '🏨') return ` <span class="muted">· check-out até ${h(ms.checkoutTime)}</span>`;
+      if (owner === 'end' && ns && ns.checkin === date && rf.end?.icon === '🏨') {
+        const bits = [ns.checkinTime ? `check-in ${h(ns.checkinTime)}` : '', ns.arrivalTime ? `chegada prevista ${h(ns.arrivalTime)}` : ''].filter(Boolean);
+        return bits.length ? ` <span class="muted">· ${bits.join(' · ')}</span>` : '';
+      }
       return '';
     };
     const itemHtml = (it) => {
@@ -1556,7 +1579,8 @@ function panelRoteiro(t) {
               ${hasPos(p) ? `<a href="https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lng}#map=17/${p.lat}/${p.lng}" target="_blank" rel="noopener">Abrir no mapa</a>` : ''}
               ${p.category === 'comida' ? '' : `<button class="link" data-action="attr-open" data-id="${p.id}">🎟️ Atrações${p.attractions?.length ? ` (${p.attractions.length})` : ''}</button>`}
               ${p.category === 'comida' ? '' : `<button class="link" data-action="alt-add" data-kind="place" data-id="${p.id}">⇄ Alternativa</button>`}
-              <button class="link danger push-right" data-action="remove-place" data-id="${p.id}">Remover</button>
+              ${p.category === 'comida' ? '' : `<button class="link push-right" data-action="place-disable" data-id="${p.id}" title="Tira do roteiro sem apagar">⏸ Desativar</button>`}
+              <button class="link danger ${p.category === 'comida' ? 'push-right' : ''}" data-action="remove-place" data-id="${p.id}">Remover</button>
             </div>
             ${p.category === 'comida' ? '' : attractionChecklist(t, p)}
             ${placeAlternatives(t, p)}
@@ -1583,10 +1607,13 @@ function panelRoteiro(t) {
       </ol>
       ${!ps.length ? '<div class="empty">Nenhum lugar neste dia. Toque em "＋ Lugar" ou escolha um em "Para encaixar".</div>' : ''}
       ${ps.length > 1 ? '<button class="btn ghost small" data-action="sort-time">Ordenar por horário</button>' : ''}
+      ${disabledList(t, disabledPlaces(t, i))}
       ${mealsBlock(t, i, rf)}`;
   }
 
-  const unplannedHtml = unplanned.length ? `
+  // na visão geral: passeios desativados sem dia (os com dia aparecem dentro do dia)
+  const offNoDay = t.places.filter((p) => p.disabled && isActive(p) && (p.day == null || p.day >= days.length));
+  const unplannedHtml = (ui.day === 'all' ? disabledList(t, offNoDay) : '') + (unplanned.length ? `
     <h3 class="section-h">Para encaixar <span class="muted">${unplanned.length}</span></h3>
     <div class="list">
       ${unplanned.map((p) => `
@@ -1595,7 +1622,7 @@ function panelRoteiro(t) {
           ${daySelect(t, p.day, `data-bind="place:${p.id}.day" data-rerender`)}
           <button class="icon danger" data-action="remove-place" data-id="${p.id}" aria-label="Remover">✕</button>
         </div>`).join('')}
-    </div>` : (t.places.length || ui.np.open ? '' : '<div class="empty card">Ainda não há lugares. Toque em "＋ Lugar" para adicionar praias, passeios e restaurantes.</div>');
+    </div>` : (t.places.length || ui.np.open ? '' : '<div class="empty card">Ainda não há lugares. Toque em "＋ Lugar" para adicionar praias, passeios e restaurantes.</div>'));
 
   const ti = days.indexOf(localToday());
   const today = ti >= 0 && (ui.day === 'all' || ui.day === ti) ? todayCard(t, ti) : '';
@@ -1753,6 +1780,19 @@ const inp = (bind, label, value, type = 'text', extra = '', labelclass = '') => 
   return `<label class="${labelclass ?? 'lbl'}">${label}<input type="${isNum ? 'text' : type}" ${isNum ? 'inputmode="decimal" data-type="number"' : ''} data-bind="${bind}" value="${h(isNum ? dec(value) : value ?? '')}" ${isNum ? 'placeholder="0"' : ''} ${extra}></label>`;
 };
 
+// Link da reserva: aceita só http(s); sem "https://" na frente, completa.
+function safeUrl(u) {
+  const x = String(u || '').trim();
+  if (!x) return '';
+  const full = /^https?:\/\//i.test(x) ? x : `https://${x}`;
+  try { const url = new URL(full); return /^https?:$/.test(url.protocol) ? url.href : ''; } catch { return ''; }
+}
+const resLink = (u, label = 'Abrir reserva') => {
+  const url = safeUrl(u);
+  return url ? `<a class="res-link" href="${h(url)}" target="_blank" rel="noopener noreferrer" title="${h(url)}">🔗 ${label}</a>` : '';
+};
+const linkField = (kind, o) => `<label class="span2">Link da reserva<input type="url" inputmode="url" data-bind="${kind}:${o.id}.url" data-rerender value="${h(o.url || '')}" placeholder="https://… (site da companhia, Booking, locadora…)"></label>`;
+
 function editBlock(key, summaryText, inner, forceOpen) {
   const open = ui.open.has(key) || forceOpen;
   return `<details class="edit" data-open-key="${key}" ${open ? 'open' : ''}><summary>${summaryText}</summary><div class="edit-body">${inner}</div></details>`;
@@ -1774,6 +1814,7 @@ function flightCard(t, f) {
   return `
     <article class="res-item res-flight">
       ${pass}
+      ${safeUrl(f.url) ? `<div class="res-links">${resLink(f.url)}</div>` : ''}
       ${editBlock(`flight-${f.id}`, 'Editar voo', `
         <div class="form-grid">
           ${inp(`flight:${f.id}.airline`, 'Companhia', f.airline)}
@@ -1785,6 +1826,7 @@ function flightCard(t, f) {
           <label>Trecho<select data-bind="flight:${f.id}.leg" data-rerender>${Object.entries(LEGS).map(([k, v]) => `<option value="${k}" ${f.leg === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
           ${inp(`flight:${f.id}.price`, `Preço (${t.currency})`, f.price, 'number', 'data-rerender')}
           ${inp(`flight:${f.id}.code`, 'Localizador', f.code, 'text', 'data-rerender')}
+          ${linkField('flight', f)}
           ${addressField(t, 'flight', f, 'from', 'Endereço do aeroporto de partida', 'Ex.: Aeroporto de Guarulhos')}
           ${addressField(t, 'flight', f, 'to', 'Endereço do aeroporto de chegada', 'Ex.: Aeroporto Zumbi dos Palmares, Maceió')}
         </div>
@@ -1795,6 +1837,12 @@ function flightCard(t, f) {
 
 function stayCard(t, s) {
   const nights = s.checkin && s.checkout ? Math.max(0, daysBetween(s.checkin, s.checkout)) : 0;
+  const early = s.arrivalTime && s.checkinTime && s.arrivalTime < s.checkinTime;
+  const times = [
+    s.checkinTime ? `🛎️ check-in ${h(s.checkinTime)}` : '',
+    s.arrivalTime ? `🧳 chegada prevista ${h(s.arrivalTime)}` : '',
+    s.checkoutTime ? `🚪 check-out ${h(s.checkoutTime)}` : '',
+  ].filter(Boolean);
   return `
     <article class="res-item res-card">
       <div class="res-head">
@@ -1805,14 +1853,19 @@ function stayCard(t, s) {
         </div>
         <b>${num(s.price) ? money(s.price, t.currency) : ''}</b>
       </div>
+      ${times.length || safeUrl(s.url) ? `<div class="res-times">${times.map((x) => `<span class="res-time">${x}</span>`).join('')}${resLink(s.url)}</div>` : ''}
+      ${early ? `<div class="hint small">⏰ Você chega às ${h(s.arrivalTime)}, antes do check-in (${h(s.checkinTime)}). Vale pedir early check-in ou guardar as malas.</div>` : ''}
       ${editBlock(`stay-${s.id}`, 'Editar hospedagem', `
         <div class="form-grid">
           ${inp(`stay:${s.id}.name`, 'Nome', s.name, 'text', 'data-rerender')}
           ${inp(`stay:${s.id}.price`, `Preço total (${t.currency})`, s.price, 'number', 'data-rerender')}
           ${inp(`stay:${s.id}.checkin`, 'Check-in', s.checkin, 'date', 'data-rerender')}
+          ${inp(`stay:${s.id}.checkinTime`, 'Horário do check-in', s.checkinTime, 'time', 'data-rerender')}
           ${inp(`stay:${s.id}.checkout`, 'Check-out', s.checkout, 'date', 'data-rerender')}
+          ${inp(`stay:${s.id}.checkoutTime`, 'Horário do check-out', s.checkoutTime, 'time', 'data-rerender')}
+          ${inp(`stay:${s.id}.arrivalTime`, 'Previsão de chegada', s.arrivalTime, 'time', 'data-rerender')}
           ${inp(`stay:${s.id}.code`, 'Nº da reserva', s.code)}
-          <span></span>
+          ${linkField('stay', s)}
           ${addressField(t, 'stay', s, '', 'Endereço', 'Rua, número, cidade')}
         </div>
         <button class="link danger" data-action="del-stay" data-id="${s.id}">Remover hospedagem</button>`, !s.name || !hasPos(s))}
@@ -1841,6 +1894,7 @@ function carCard(t, c) {
           <div class="muted small">${c.pickupAt ? `${fmtDate(c.pickupAt)} ${fmtTime(c.pickupAt)} → ${fmtDate(c.returnAt)} ${fmtTime(c.returnAt)}` : 'sem datas'}</div>
         </div>
       </div>
+      ${safeUrl(c.url) ? `<div class="res-links">${resLink(c.url)}</div>` : ''}
       <table class="voucher-table">
         <tbody>
           ${voucherRows.map(([label, v]) => `<tr><td>${label}</td><td>${m(v)}</td></tr>`).join('')}
@@ -1883,6 +1937,7 @@ function carCard(t, c) {
           ${inp(`car:${c.id}.kmPerDay`, 'Franquia de km por dia (0 = livre)', c.kmPerDay, 'number', 'data-rerender')}
           ${inp(`car:${c.id}.excessKmPrice`, `Valor do km excedente (${cc})`, c.excessKmPrice, 'number', 'data-rerender')}
           ${inp(`car:${c.id}.code`, 'Nº da reserva', c.code)}
+          ${linkField('car', c)}
         </div>
         <div class="addons">
           <div class="section-head"><span class="sub-h">Adicionais e taxas</span><button class="btn small" data-action="add-addon" data-id="${c.id}">＋ Adicional</button></div>
@@ -2087,7 +2142,7 @@ function placesSummary(t, kind) {
   const c = t.currency, n = Math.max(1, num(t.travelers));
   const food = kind === 'restaurantes';
   const total = list.reduce((a, x) => a + placeCost(t, x.p), 0);
-  const unscheduled = t.places.filter((p) => isActive(p) && (p.category === 'comida') === food && !p.meal && (p.day == null || p.day >= tripDays(t).length)).length;
+  const unscheduled = t.places.filter((p) => isActive(p) && !p.disabled && (p.category === 'comida') === food && !p.meal && (p.day == null || p.day >= tripDays(t).length)).length;
   if (!list.length) {
     return `<div class="empty card">${food ? 'Nenhum restaurante escolhido ainda. Escolha as opções de almoço e jantar no Roteiro (círculo ao lado da opção).' : 'Nenhum passeio no roteiro ainda. Adicione em Roteiro → "＋ Lugar".'}</div>`;
   }
@@ -2401,7 +2456,7 @@ function updateMap() {
       const rf = dayLines(i);
       [rf.start, rf.pickup, rf.ret, rf.end].forEach((a) => addAnchor(a));
     });
-    t.places.filter((p) => isActive(p) && (p.day == null || p.day >= days.length)).forEach((p) => hasPos(p) && markers.push({ lat: p.lat, lng: p.lng, label: '•', color: dayColor(null), cls: 'small', popup: placePopup(p, '<br>Ainda sem dia') }));
+    t.places.filter((p) => isActive(p) && !p.disabled && (p.day == null || p.day >= days.length)).forEach((p) => hasPos(p) && markers.push({ lat: p.lat, lng: p.lng, label: '•', color: dayColor(null), cls: 'small', popup: placePopup(p, '<br>Ainda sem dia') }));
     for (const s of act(t.stays)) addAnchor({ ...s, icon: '🏨' }, `<b>${h(s.name)}</b>${s.checkin ? `<br>${fmtDate(s.checkin)} → ${fmtDate(s.checkout)}` : ''}`);
     flightLines(act(t.flights));
   }
@@ -2592,6 +2647,7 @@ document.addEventListener('change', (e) => {
   save();
 });
 document.addEventListener('toggle', (e) => {
+  if (e.target.matches?.('[data-off-list]')) ui.offOpen = e.target.open;
   const id = e.target.dataset?.attrPlace;
   if (id) e.target.open ? ui.attrOpen.add(id) : ui.attrOpen.delete(id);
 }, true);
@@ -2654,6 +2710,16 @@ document.addEventListener('click', async (e) => {
       ui.forceAttr = true;
       if (p) ensureAttrRoute(t, p);
       return;
+    }
+    case 'place-disable':
+    case 'place-enable': {
+      const p = t.places.find((x) => x.id === el.dataset.id);
+      if (!p) return;
+      if (action === 'place-disable') p.disabled = true; else delete p.disabled;
+      save();
+      toast(action === 'place-disable' ? `"${p.name}" desativado. Ele fica guardado no fim do dia.` : `"${p.name}" voltou para o roteiro.`, 'ok');
+      if (ui.detail === p.id) ui.detail = null;
+      return renderPanel();
     }
     case 'today-done': {
       const p = t.places.find((x) => x.id === el.dataset.id);

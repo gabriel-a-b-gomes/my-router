@@ -940,3 +940,34 @@ select.leg-mode.manual { border-color: var(--primary); color: var(--primary); fo
 @keyframes attr-moved { from { background: var(--primary-soft); } }
 .attr-order { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
 .attr-sum { padding-left: .15rem; }
+
+/* ---------- v17: mapa mais limpo de longe ---------- */
+.pin.cluster {
+  height: 28px; border-radius: 999px; background: var(--c); color: #fff; font: 800 12px/1 var(--font-display);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--c) 30%, transparent), 0 2px 6px rgba(0, 0, 0, .35); cursor: pointer;
+}
+.pin.cluster.cluster-nums { font-size: 11px; letter-spacing: .02em; }
+.zoom-far .pin:not(.cluster):not(.stay) { transform: scale(.82); }
+.zoom-far .pin.stay { transform: scale(.85); }
+
+/* ---------- v17: hospedagem, links e passeios desativados ---------- */
+.res-times { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .55rem; align-items: center; }
+.res-time { font-size: .78rem; background: var(--surface-2); border-radius: 999px; padding: .2rem .55rem; white-space: nowrap; }
+.res-links { display: flex; justify-content: flex-end; margin: .45rem .2rem 0; }
+.res-flight > .res-links { margin: .45rem .3rem .2rem; }
+.res-link {
+  display: inline-flex; align-items: center; gap: .3rem; font-size: .8rem; font-weight: 600; text-decoration: none; white-space: nowrap;
+  color: var(--primary); background: var(--primary-soft); border-radius: 999px; padding: .25rem .65rem;
+}
+.res-times .res-link { margin-left: auto; }
+.res-link:hover { filter: brightness(.97); text-decoration: underline; }
+.off-list { margin-top: .6rem; border: 1px dashed var(--border); border-radius: var(--r-md); background: var(--surface); }
+.off-list > summary { cursor: pointer; padding: .6rem .85rem; font-size: .88rem; font-weight: 600; color: var(--muted); list-style: none; }
+.off-list > summary::-webkit-details-marker { display: none; }
+.off-list > summary::after { content: ' ▾'; }
+.off-list[open] > summary::after { content: ' ▴'; }
+.off-list ul { list-style: none; margin: 0; padding: 0 .85rem .3rem; display: flex; flex-direction: column; gap: .4rem; }
+.off-list li { display: flex; align-items: center; gap: .5rem; padding: .45rem 0; border-top: 1px solid var(--border); }
+.off-list li .grow { display: flex; flex-direction: column; opacity: .75; }
+.off-list li b { text-decoration: line-through; text-decoration-color: var(--muted); }
+.off-list p { margin: 0 .85rem .7rem; }

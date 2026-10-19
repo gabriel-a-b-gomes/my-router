@@ -90,6 +90,23 @@ Com atrações cadastradas, o cartão do passeio mostra **🎟️ N atrações �
 - O mapa mostra só o passeio, as atrações numeradas (⭐ em amarelo) e as rotas entre elas, e cada atração tem 🧭 para navegar até ela.
 - Esses km ficam só nos detalhes. Eles não entram no total de km nem no combustível da viagem.
 
+### Hospedagem: horários e chegada
+Em cada hospedagem dá para informar o **horário do check-in**, o **horário do check-out** e a **previsão de chegada**.
+- O cartão mostra os três horários. Se você chega **antes do check-in**, aparece um aviso para pedir early check-in ou guardar as malas.
+- No roteiro, o hotel do dia de entrada mostra "check-in 15:00 · chegada prevista 13:30", e o do dia de saída mostra "check-out até 11:00".
+
+### Link da reserva
+Hospedagem, voo e aluguel de carro têm o campo **Link da reserva**. Cole o endereço (pode ser sem o "https://") e o cartão ganha o botão **🔗 Abrir reserva**. Só links http/https são aceitos.
+
+### Desativar um passeio
+No cartão do passeio, **⏸ Desativar** tira o passeio do roteiro **sem apagar**: ele sai da rota, dos custos, do mapa, do Hoje e do Resumo.
+- Os desativados ficam numa lista recolhida no fim do dia ("⏸ 1 passeio desativado"), com **▶ Reativar**, que devolve o passeio ao mesmo dia e posição, e ✕ para remover de vez.
+
+### Mapa mais limpo de longe
+- Pinos que ficariam um em cima do outro viram um **grupo com a contagem** (ou "1·2·3" quando são até 3 paradas numeradas). **Toque no grupo para aproximar**: os pinos se separam.
+- De longe, as linhas ficam mais finas e os rótulos de km do Modo km somem. Eles voltam ao aproximar.
+- Com zoom bem próximo, nada é agrupado.
+
 ### Modo "Hoje" (durante a viagem)
 Nos dias da viagem, o Roteiro já abre no **dia de hoje** com um cartão de destaque:
 - **Próxima parada**, com horário, duração e o tempo de deslocamento até lá.
