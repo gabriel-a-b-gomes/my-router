@@ -97,6 +97,11 @@ Em cada hospedagem dá para informar o **horário do check-in**, o **horário do
 
 ### Link da reserva
 Hospedagem, voo e aluguel de carro têm o campo **Link da reserva**. Cole o endereço (pode ser sem o "https://") e o cartão ganha o botão **🔗 Abrir reserva**. Só links http/https são aceitos.
+- No voo, o botão **🔗 Reserva** fica no canhoto do bilhete, abaixo do preço.
+- **Abrir no app (celular):**
+  - **Android:** o botão pede ao sistema para abrir o link no app da empresa (Booking, Azul, Localiza…). Se o app estiver instalado e registrado para aquele site, ele abre direto. Se houver mais de uma opção, o Android pergunta qual usar. Sem app, abre no navegador.
+  - **iPhone:** o iOS abre o app sozinho quando o site da empresa permite. Se abrir no navegador, **segure o botão** e escolha "Abrir em <app>" (quando o app aparece no menu). Depois o iOS costuma lembrar a escolha.
+  - Funciona melhor com o link da "minha reserva" do site da empresa do que com links de e-mail encurtados ou de rastreamento.
 
 ### Desativar um passeio
 No cartão do passeio, **⏸ Desativar** tira o passeio do roteiro **sem apagar**: ele sai da rota, dos custos, do mapa, do Hoje e do Resumo.

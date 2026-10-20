@@ -333,7 +333,7 @@ function firstFlight(t, leg) {
   return act(t.flights).filter((f) => flightLeg(t, f) === leg).sort((a, b) => (a.depart || '').localeCompare(b.depart || ''))[0];
 }
 
-function passHtml({ from, to, fromSub, toSub, metaLeft, metaRight, stubLabel, stubValue, stubSub, big = false }) {
+function passHtml({ from, to, fromSub, toSub, metaLeft, metaRight, stubLabel, stubValue, stubSub, stubExtra = '', big = false }) {
   return `
     <div class="pass ${big ? 'pass-big' : ''}">
       <div class="pass-main">
@@ -348,6 +348,7 @@ function passHtml({ from, to, fromSub, toSub, metaLeft, metaRight, stubLabel, st
         <span class="stub-label">${h(stubLabel || '')}</span>
         <b class="stub-value">${h(stubValue || '—')}</b>
         <span class="stub-sub">${stubSub || ''}</span>
+        ${stubExtra}
       </div>
     </div>`;
 }
@@ -1787,9 +1788,20 @@ function safeUrl(u) {
   const full = /^https?:\/\//i.test(x) ? x : `https://${x}`;
   try { const url = new URL(full); return /^https?:$/.test(url.protocol) ? url.href : ''; } catch { return ''; }
 }
-const resLink = (u, label = 'Abrir reserva') => {
+// No Android, o link vira um "intent": o sistema abre o app da empresa (se estiver instalado e
+// registrado para esse site) ou pergunta qual app usar; sem app, cai no navegador (fallback).
+// iPhone/computador: link normal (no iPhone, o próprio iOS abre o app quando o site suporta).
+const IS_ANDROID = /Android/i.test(navigator.userAgent);
+function appHref(url) {
+  if (!IS_ANDROID) return url;
+  const u = new URL(url);
+  const path = `${u.host}${u.pathname}${u.search}`; // o "#" da URL conflitaria com o formato do intent
+  return `intent://${path}#Intent;scheme=${u.protocol.replace(':', '')};action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;S.browser_fallback_url=${encodeURIComponent(url)};end`;
+}
+const resLink = (u, label = 'Abrir reserva', cls = '') => {
   const url = safeUrl(u);
-  return url ? `<a class="res-link" href="${h(url)}" target="_blank" rel="noopener noreferrer" title="${h(url)}">🔗 ${label}</a>` : '';
+  if (!url) return '';
+  return `<a class="res-link ${cls}" href="${h(appHref(url))}" ${IS_ANDROID ? '' : 'target="_blank"'} rel="noopener noreferrer" title="${IS_ANDROID ? 'Abre no app (se instalado) ou no navegador' : h(url)}" data-url="${h(url)}">🔗 ${label}</a>`;
 };
 const linkField = (kind, o) => `<label class="span2">Link da reserva<input type="url" inputmode="url" data-bind="${kind}:${o.id}.url" data-rerender value="${h(o.url || '')}" placeholder="https://… (site da companhia, Booking, locadora…)"></label>`;
 
@@ -1808,13 +1820,13 @@ function flightCard(t, f) {
     metaLeft: h([f.airline, f.number].filter(Boolean).join(' ') || 'Voo'),
     metaRight: { ida: 'Ida', volta: 'Volta', interno: 'Trecho interno' }[leg] + (flightKm(f) ? ` · ${kmFmt(flightKm(f))}` : ''),
     stubLabel: 'Localizador', stubValue: f.code || '—', stubSub: num(f.price) ? money(f.price, t.currency) : nights,
+    stubExtra: resLink(f.url, 'Reserva', 'res-link-stub'),
   });
   const fk = flightKm(f);
   const incomplete = !f.from || !f.to || !f.depart;
   return `
     <article class="res-item res-flight">
       ${pass}
-      ${safeUrl(f.url) ? `<div class="res-links">${resLink(f.url)}</div>` : ''}
       ${editBlock(`flight-${f.id}`, 'Editar voo', `
         <div class="form-grid">
           ${inp(`flight:${f.id}.airline`, 'Companhia', f.airline)}
