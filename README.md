@@ -104,6 +104,8 @@ No cartão do passeio, **⏸ Desativar** tira o passeio do roteiro **sem apagar*
 
 ### Mapa mais limpo de longe
 - Pinos que ficariam um em cima do outro viram um **grupo com a contagem** (ou "1·2·3" quando são até 3 paradas numeradas). **Toque no grupo para aproximar**: os pinos se separam.
+- Um grupo com lugares de vários dias mostra **as cores dos dias lado a lado**, em faixas.
+- **Hospedagens** (e aeroportos e locadoras) nunca entram num grupo e ficam sempre por cima. O que cairia em cima delas aparece logo ao lado.
 - De longe, as linhas ficam mais finas e os rótulos de km do Modo km somem. Eles voltam ao aproximar.
 - Com zoom bem próximo, nada é agrupado.
 

@@ -971,3 +971,5 @@ select.leg-mode.manual { border-color: var(--primary); color: var(--primary); fo
 .off-list li .grow { display: flex; flex-direction: column; opacity: .75; }
 .off-list li b { text-decoration: line-through; text-decoration-color: var(--muted); }
 .off-list p { margin: 0 .85rem .7rem; }
+/* grupo com vários dias: faixas com as cores dos dias, número legível em cima */
+.pin.cluster.cluster-mix { box-shadow: 0 0 0 3px rgba(255, 255, 255, .9), 0 2px 8px rgba(0, 0, 0, .4); text-shadow: 0 1px 2px rgba(0, 0, 0, .6); }

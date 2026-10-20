@@ -71,14 +71,17 @@ function styleLines() {
 
 function clusterIcon(list) {
   const nums = list.map((m) => m.label).filter((x) => typeof x === 'number' || /^\d+$/.test(String(x)));
-  const colors = new Set(list.map((m) => m.color));
-  const color = colors.size === 1 ? [...colors][0] : '#0d3b4f';
+  // cores dos dias do grupo, lado a lado (uma faixa por dia, na ordem dos dias)
+  const colors = [...new Set(list.map((m) => m.color))].slice(0, 6);
+  const color = colors[0];
+  const bg = colors.length === 1 ? colors[0]
+    : `linear-gradient(90deg, ${colors.map((c, k) => `${c} ${(k * 100) / colors.length}% ${((k + 1) * 100) / colors.length}%`).join(', ')})`;
   // até 3 paradas numeradas: mostra "1·2·3"; senão, a contagem
   const text = nums.length === list.length && list.length <= 3 ? nums.sort((a, b) => a - b).join('·') : `${list.length}`;
   const w = Math.max(30, 14 + text.length * 8);
   return L.divIcon({
     className: '',
-    html: `<div class="pin cluster ${nums.length === list.length && list.length <= 3 ? 'cluster-nums' : ''}" style="--c:${color};width:${w - 2}px">${text}</div>`,
+    html: `<div class="pin cluster ${colors.length > 1 ? 'cluster-mix' : ''} ${nums.length === list.length && list.length <= 3 ? 'cluster-nums' : ''}" style="--c:${color};background:${bg};width:${w - 2}px" title="${list.length} lugares${colors.length > 1 ? ` de ${colors.length} dias` : ''} — toque para aproximar">${text}</div>`,
     iconSize: [w, 30], iconAnchor: [w / 2, 15],
   });
 }
@@ -90,8 +93,24 @@ function renderMarkers() {
   styleLines();
   const z = map.getZoom();
   const visible = current.markers.filter((m) => m.cls !== 'km-label' || z >= KM_LABEL_MIN);
+  // posições (na tela) dos pontos fixos: o que cair em cima deles é empurrado para o lado
+  const fixed = visible.filter((m) => m.cls === 'stay').map((m) => map.project([m.lat, m.lng], z));
+  const NUDGE = 32;
+  const nudge = (lat, lng) => {
+    if (z >= CLUSTER_UNTIL) return [lat, lng];
+    let pt = map.project([lat, lng], z);
+    for (const f of fixed) {
+      const d = pt.distanceTo(f);
+      if (d >= NUDGE) continue;
+      const dir = d > 0.5 ? pt.subtract(f).divideBy(d) : L.point(0.7071, -0.7071); // sem direção: para cima e à direita
+      pt = f.add(dir.multiplyBy(NUDGE));
+    }
+    const ll = map.unproject(pt, z);
+    return [ll.lat, ll.lng];
+  };
   const add = (m) => {
-    const mk = L.marker([m.lat, m.lng], { icon: pin(m.label, m.color, m.cls, m.size), zIndexOffset: m.z || 0, interactive: m.cls !== 'km-label', keyboard: m.cls !== 'km-label' }).addTo(markerGroup);
+    const [lat, lng] = m.cls === 'stay' || m.cls === 'km-label' ? [m.lat, m.lng] : nudge(m.lat, m.lng);
+    const mk = L.marker([lat, lng], { icon: pin(m.label, m.color, m.cls, m.size), zIndexOffset: m.z || 0, interactive: m.cls !== 'km-label', keyboard: m.cls !== 'km-label' }).addTo(markerGroup);
     if (m.popup) mk.bindPopup(m.popup, { maxWidth: 260 });
   };
   if (z >= CLUSTER_UNTIL) { visible.forEach(add); return; }
@@ -99,6 +118,8 @@ function renderMarkers() {
   const groups = [];
   const sorted = [...visible].sort((a, b) => (b.z || 0) - (a.z || 0));
   for (const m of sorted) {
+    // hospedagens e outros pontos fixos (aeroporto, locadora) nunca entram em grupo e ficam por cima
+    if (m.cls === 'stay') { add({ ...m, z: Math.max(m.z || 0, 3000) }); continue; }
     if (m.cls === 'km-label' || m.cls === 'result') { add(m); continue; }
     const pt = map.project([m.lat, m.lng], z);
     const g = groups.find((x) => x.pt.distanceTo(pt) < CLUSTER_PX);
@@ -108,7 +129,8 @@ function renderMarkers() {
     if (g.list.length === 1) { add(g.list[0]); continue; }
     const lat = g.list.reduce((a, m) => a + m.lat, 0) / g.list.length;
     const lng = g.list.reduce((a, m) => a + m.lng, 0) / g.list.length;
-    const mk = L.marker([lat, lng], { icon: clusterIcon(g.list), zIndexOffset: 2000, title: `${g.list.length} lugares — toque para aproximar` }).addTo(markerGroup);
+    const [nlat, nlng] = nudge(lat, lng);
+    const mk = L.marker([nlat, nlng], { icon: clusterIcon(g.list), zIndexOffset: 2000, title: `${g.list.length} lugares — toque para aproximar` }).addTo(markerGroup);
     mk.on('click', () => {
       const b = L.latLngBounds(g.list.map((m) => [m.lat, m.lng]));
       const target = Math.min(map.getBoundsZoom(b, false, L.point(60, 60)), 18);
