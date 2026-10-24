@@ -84,7 +84,7 @@ export const MEALS = {
 export const PRICE_TAGS = { barato: '$ Barato', medio: '$$ Médio', caro: '$$$ Caro' };
 export const FOOD_STYLES = {
   alacarte: 'À la carte', rodizio: 'Rodízio', quilo: 'Por quilo', buffet: 'Buffet',
-  lanche: 'Lanche', petiscos: 'Petiscos/bar', praia: 'Barraca de praia', doceria: 'Café/doceria',
+  pizza: 'Pizza', lanche: 'Lanche', petiscos: 'Petiscos/bar', praia: 'Barraca de praia', doceria: 'Café/doceria',
 };
 // opção de restaurante ainda não escolhida: fica fora do roteiro e da rota
 export const isOption = (p) => p.category === 'comida' && !!p.meal && !p.chosen;
