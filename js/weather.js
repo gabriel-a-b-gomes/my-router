@@ -57,11 +57,12 @@ const inflight = new Map();
 export async function fetchForecast(pos) {
   const k = locKey(pos);
   const hit = load()[k];
-  if (hit && Date.now() - hit.t < TTL) return false;
+  if (hit && hit.v === 2 && Date.now() - hit.t < TTL) return false; // v2: com previsão hora a hora
   if (inflight.has(k)) return inflight.get(k);
   const url = 'https://api.open-meteo.com/v1/forecast'
     + `?latitude=${(+pos.lat).toFixed(3)}&longitude=${(+pos.lng).toFixed(3)}`
     + '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max'
+    + '&hourly=temperature_2m,precipitation_probability,precipitation,weather_code'
     + `&timezone=auto&forecast_days=${RANGE_DAYS}`;
   const p = (async () => {
     try {
@@ -78,7 +79,19 @@ export async function fetchForecast(pos) {
           rain: d.precipitation_probability_max?.[i],
         };
       });
-      load()[k] = { t: Date.now(), days };
+      // hora a hora: guardado por dia em listas compactas (índice = hora local 0–23)
+      const hr = data.hourly || {};
+      (hr.time || []).forEach((iso, i) => {
+        const [date, hm] = String(iso).split('T');
+        const hour = parseInt(hm, 10);
+        if (!days[date] || !Number.isFinite(hour)) return;
+        const H = (days[date].hrs ||= { c: [], t: [], p: [], m: [] });
+        H.c[hour] = hr.weather_code?.[i];
+        H.t[hour] = hr.temperature_2m?.[i];
+        H.p[hour] = hr.precipitation_probability?.[i];
+        H.m[hour] = hr.precipitation?.[i];
+      });
+      load()[k] = { v: 2, t: Date.now(), days };
       persist();
       return true;
     } catch {
@@ -89,4 +102,33 @@ export async function fetchForecast(pos) {
   })();
   inflight.set(k, p);
   return p;
+}
+
+/** Previsão hora a hora de um dia: [{hour, temp, pop, mm, code, icon, label}] ou null. */
+export function hourlyAt(pos, date) {
+  if (!pos) return null;
+  const H = load()[locKey(pos)]?.days?.[date]?.hrs;
+  if (!H) return null;
+  const out = [];
+  for (let hour = 0; hour < 24; hour++) {
+    if (H.c[hour] == null && H.t[hour] == null) continue;
+    out.push({ hour, temp: H.t[hour], pop: H.p[hour], mm: H.m[hour], code: H.c[hour], ...describe(H.c[hour]) });
+  }
+  return out.length ? out : null;
+}
+
+// Hora com chuva: chance alta (≥ 50%) ou chuva medida relevante (≥ 0,5 mm).
+export const isRainy = (x) => (Number.isFinite(x.pop) && x.pop >= 50) || (Number.isFinite(x.mm) && x.mm >= 0.5);
+
+/** Janelas seguidas de chuva: [{from, to, pop, mm}] (to = hora final inclusive). */
+export function rainWindows(hours) {
+  const out = [];
+  for (const x of hours || []) {
+    const last = out[out.length - 1];
+    if (!isRainy(x)) continue;
+    if (last && last.to === x.hour - 1) {
+      last.to = x.hour; last.pop = Math.max(last.pop, x.pop || 0); last.mm += x.mm || 0;
+    } else out.push({ from: x.hour, to: x.hour, pop: x.pop || 0, mm: x.mm || 0 });
+  }
+  return out;
 }

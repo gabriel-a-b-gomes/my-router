@@ -4,7 +4,7 @@
 import { api } from './api.js';
 import { normalizeTrip } from './util.js';
 
-const normalize = (d) => { d.trips = (d.trips || []).map(normalizeTrip); return d; };
+const normalize = (d) => { d.trips = (d.trips || []).map(normalizeTrip); d.library = Array.isArray(d.library) ? d.library : []; return d; };
 
 const LOCAL_KEY = 'roteiro:data';
 const listeners = new Set();

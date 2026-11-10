@@ -587,3 +587,54 @@ export function simulate(trip, choices) {
   const copy = applyChoices(JSON.parse(JSON.stringify(trip)), choices);
   return tripSummary(copy);
 }
+
+// ---------------------------------------------------------------- repositório de restaurantes
+// Lista única (store.data.library) usada por todas as viagens, agrupada por cidade.
+// Itens: {id, name, city, address, lat, lng, costPP, price, style, note, url, addedAt}
+export const normText = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+// cidade de uma viagem: a primeira parte do destino ("Maceió, AL" → "Maceió")
+export const cityOfTrip = (t) => String(t?.destination || '').split(/[,–-]/)[0].trim();
+export const sameCity = (a, b) => !!normText(a) && normText(a) === normText(b);
+const LIB_FIELDS = ['name', 'address', 'lat', 'lng', 'costPP', 'price', 'style', 'note', 'url'];
+
+export function libFind(list, name, city) {
+  return (list || []).find((r) => normText(r.name) === normText(name) && normText(r.city) === normText(city));
+}
+export function libFromPlace(p, city) {
+  const r = { id: uid(), city: String(city || '').trim(), addedAt: new Date().toISOString() };
+  for (const k of LIB_FIELDS) if (p[k] != null && p[k] !== '') r[k] = p[k];
+  return r;
+}
+/** Copia os dados do repositório para um restaurante da viagem (o restaurante vira uma cópia independente). */
+export function libToPlace(r) {
+  const p = { libId: r.id, category: 'comida' };
+  for (const k of LIB_FIELDS) if (r[k] != null && r[k] !== '') p[k] = r[k];
+  p.costPP = num(r.costPP);
+  return p;
+}
+/** Salva (ou atualiza) um restaurante da viagem no repositório. Retorna {item, created}. */
+export function libUpsert(list, p, city) {
+  const hit = list.find((r) => r.id === p.libId) || libFind(list, p.name, city);
+  if (hit) {
+    for (const k of LIB_FIELDS) if (p[k] != null && p[k] !== '') hit[k] = p[k];
+    if (city && !hit.city) hit.city = city;
+    p.libId = hit.id;
+    return { item: hit, created: false };
+  }
+  const item = libFromPlace(p, city);
+  list.push(item);
+  p.libId = item.id;
+  return { item, created: true };
+}
+/** Agrupa por cidade (nome exibido = o primeiro cadastrado), cidades e restaurantes em ordem alfabética. */
+export function libByCity(list) {
+  const groups = new Map();
+  for (const r of list || []) {
+    const key = normText(r.city) || '~';
+    if (!groups.has(key)) groups.set(key, { key, city: r.city?.trim() || 'Sem cidade', items: [] });
+    groups.get(key).items.push(r);
+  }
+  const out = [...groups.values()];
+  out.forEach((g) => g.items.sort((a, b) => normText(a.name).localeCompare(normText(b.name))));
+  return out.sort((a, b) => (a.key === '~') - (b.key === '~') || a.key.localeCompare(b.key));
+}

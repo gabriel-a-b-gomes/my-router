@@ -114,6 +114,21 @@ No cartão do passeio, **⏸ Desativar** tira o passeio do roteiro **sem apagar*
 - De longe, as linhas ficam mais finas e os rótulos de km do Modo km somem. Eles voltam ao aproximar.
 - Com zoom bem próximo, nada é agrupado.
 
+### Meus restaurantes (repositório)
+Uma lista de restaurantes que vale para **todas as viagens**, agrupada por **cidade**, para não precisar recadastrar.
+- Na tela inicial, toque em **🍽️ Meus restaurantes**. A página tem busca (nome, cidade, estilo), **＋ Restaurante** (nome, cidade, preço por pessoa, faixa, estilo, endereço com 🔎, link e anotação) e **⤓ Importar de uma viagem**, que traz todos os restaurantes de uma viagem para a cidade do destino. Reimportar não duplica: os que já existem são atualizados.
+- **Na viagem:** em Almoço/Jantar, use **📚 Do repositório**. Os restaurantes da cidade do destino aparecem primeiro. Marque quantos quiser e eles entram como opções da refeição. Os que já estão naquela refeição aparecem desativados.
+- **Salvar no repositório:** na edição de um restaurante da viagem há **📚 Salvar no repositório** (ou **Atualizar**, se ele já veio de lá). A cidade usada é a do destino da viagem.
+- O restaurante adicionado à viagem é uma **cópia**: mudar o preço numa viagem não altera o repositório, e excluir do repositório não apaga das viagens.
+
+### Mala
+Aba **🧳 Mala** na viagem, com um checklist montado pelo **tipo de viagem**.
+- O **básico** (documentos, roupas, higiene, saúde, eletrônicos, acessórios) está sempre incluído. Marque os tipos que combinam: 🏖️ Praia, ❄️ Frio, 🏙️ Cidade, 🥾 Natureza/trilha, 💼 Trabalho, 🌎 Internacional, 🚗 Viagem de carro, 🧸 Com crianças, ⛺ Camping. Dá para combinar vários, e os itens repetidos aparecem uma vez só.
+- **Viagem de carro** já vem marcada quando há aluguel de carro, e **Internacional** quando a moeda não é real.
+- As **quantidades de roupa** seguem o número de dias (camisetas × 5, roupas íntimas × 6…), até 7 mudas em viagens longas.
+- Marque o que já está na mala (contador e barra de progresso), **adicione itens seus** na categoria que quiser e toque em ✕ para ocultar o que não precisa (**Mostrar ocultos** traz de volta).
+- **↺ Desmarcar tudo** serve para conferir a mala na volta.
+
 ### Modo "Hoje" (durante a viagem)
 Nos dias da viagem, o Roteiro já abre no **dia de hoje** com um cartão de destaque:
 - **Próxima parada**, com horário, duração e o tempo de deslocamento até lá.
@@ -126,6 +141,11 @@ Cada dia mostra ícone, máxima/mínima e chance de chuva (quando passa de 10%) 
 - Vem do **Open-Meteo**: grátis e sem cadastro. O navegador consulta direto, sem passar pelo servidor.
 - A previsão cobre até **16 dias à frente**. Dias mais distantes ficam sem previsão até a data chegar perto.
 - Fica guardada no aparelho por 3 horas (uma consulta por local).
+
+**Hora a hora:** no topo de cada dia (dentro dos 16 dias de previsão) aparece um resumo como **"🌧️ Chuva provável 14h–17h (até 80%)"**.
+- Toque nele para abrir a **faixa hora a hora**: ícone, temperatura e chance de chuva de cada hora. As horas com chuva (chance ≥ 50% ou ≥ 0,5 mm) ficam em azul, e as horas com passeio marcado têm um traço amarelo embaixo. No dia de hoje, a faixa já abre na hora atual. O app lembra se você deixou a faixa aberta.
+- Se um passeio com horário cai numa janela de chuva, aparece um aviso: "⚠️ Praia do Gunga (13h–16h) — chuva prevista 14h–17h". Passeios sem duração contam como 1 hora, e restaurantes não geram aviso.
+- No cartão **Hoje**, aparece a chuva prevista para o resto do dia.
 
 ### Resumo: Passeios e Restaurantes
 No Resumo há três abas: **Custos** (o resumo de antes), **Passeios** e **Restaurantes**.

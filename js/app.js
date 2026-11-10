@@ -5,8 +5,10 @@ import {
   greatCircle, dayKm, pickupAfterFlight, returnBeforeFlight, haversineKm, MEALS, PRICE_TAGS, FOOD_STYLES,
   mealPlan, placeCost, DURATIONS, fmtDuration, isActive, act, groupOf, currentChoices, applyChoices, sameChoices, simulate,
   ensurePackages, activePackage, switchPackage, clonePackageData, packageCost, packageData, nightStay, morningStay, disabledPlaces,
+  normText, cityOfTrip, sameCity, libToPlace, libUpsert, libByCity, libFind, libFromPlace,
 } from './util.js';
-import { forecastAt, fetchForecast, inRange } from './weather.js';
+import { PACK_CATS, TRIP_TYPES, ensurePacking, packingList } from './packing.js';
+import { forecastAt, fetchForecast, inRange, hourlyAt, rainWindows, isRainy } from './weather.js';
 import { api, getPassword, setPassword, geocode, getRoute, forgetEstimates } from './api.js';
 import { store, loadData, loadOffline, save, getTrip, onSync, replaceAll } from './store.js';
 import { mountMap, drawMap, refreshSize, setPicking } from './map.js';
@@ -39,6 +41,9 @@ const ui = {
   detail: null, // passeio aberto em "Detalhes"
   detailAll: false,
   resTab: ['passeios', 'restaurantes'].includes(loadPref('roteiro:resTab')) ? loadPref('roteiro:resTab') : 'custos', // abas do Resumo
+  wxOpen: loadPref('roteiro:wxHourly') === '1', // faixa da previsão hora a hora aberta
+  packClosed: new Set(), packCat: 'outros', // mala
+  libQuery: '', libNew: null, libEdit: null, libGeo: null, libLastCity: '', libClosed: new Set(), // repositório de restaurantes
   autoRoutes: loadPref('roteiro:autoRoutes') !== '0', // consulta rotas novas sozinho (com espera)
   editOpt: null, // opção de restaurante sendo editada no bloco Refeições
   homeTab: 'ativas', // 'ativas' | 'canceladas'
@@ -88,6 +93,7 @@ const TABS = [
   ['roteiro', '🗺️', 'Roteiro'],
   ['gastos', '💸', 'Gastos'],
   ['reservas', '🎫', 'Reservas'],
+  ['mala', '🧳', 'Mala'],
   ['resumo', '📊', 'Resumo'],
 ];
 const MODES = { 'foot-walking': '🚶 A pé', 'cycling-regular': '🚲 Bicicleta', 'driving-car': '🚗 Carro' };
@@ -303,6 +309,11 @@ function cancelPick() {
 
 function route() {
   if (app.dataset.view === 'login' && !getPassword()) return;
+  if (/^#\/restaurantes/.test(location.hash)) {
+    ui.tripId = null;
+    cancelPick();
+    return renderLibrary();
+  }
   const m = location.hash.match(/^#\/t\/([^/]+)(?:\/(\w+))?/);
   if (m && getTrip(m[1])) {
     const t = getTrip(m[1]);
@@ -351,6 +362,192 @@ function passHtml({ from, to, fromSub, toSub, metaLeft, metaRight, stubLabel, st
         ${stubExtra}
       </div>
     </div>`;
+}
+
+// ---------------------------------------------------------------- repositório de restaurantes
+const lib = () => (store.data.library ||= []);
+function libSummaryTxt() {
+  const list = lib();
+  if (!list.length) return 'Guarde restaurantes por cidade e reaproveite em qualquer viagem';
+  const cities = libByCity(list).length;
+  return `${list.length} restaurante${list.length > 1 ? 's' : ''} em ${cities} cidade${cities > 1 ? 's' : ''}`;
+}
+// em quantas viagens um restaurante do repositório está sendo usado
+const libUses = (r) => store.data.trips.filter((t) => t.places.some((p) => p.libId === r.id)).length;
+const libMatches = (r, q) => !q || normText(`${r.name} ${r.city} ${r.note || ''} ${FOOD_STYLES[r.style] || ''} ${r.address || ''}`).includes(q);
+const mapsLink = (r) => (hasPos(r) ? `https://www.google.com/maps/search/?api=1&query=${r.lat},${r.lng}` : r.address ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${r.name}, ${r.address}`)}` : '');
+
+function libItemHtml(r) {
+  const editing = ui.libEdit === r.id;
+  const uses = libUses(r);
+  const link = mapsLink(r);
+  return `
+    <li class="lib-item ${editing ? 'open' : ''}" data-lib-id="${r.id}">
+      <div class="lib-sum">
+        <div class="grow">
+          <b>${h(r.name || 'Sem nome')}</b>
+          <div class="flags">${foodTags(r)}${num(r.costPP) ? `<span class="muted small">${money(r.costPP, 'BRL')}/pessoa</span>` : ''}${uses ? `<span class="muted small">· em ${uses} viagem${uses > 1 ? 'ns' : ''}</span>` : ''}</div>
+          ${r.note && !editing ? `<div class="muted small lib-note">${h(r.note)}</div>` : ''}
+        </div>
+        ${link ? `<a class="icon small-icon" href="${link}" target="_blank" rel="noopener" title="Abrir no mapa" aria-label="Abrir ${h(r.name)} no mapa">🗺️</a>` : ''}
+        <button class="icon small-icon ${editing ? 'done-icon' : ''}" data-action="lib-edit" data-id="${r.id}" title="${editing ? 'Concluir' : 'Editar'}" aria-label="${editing ? 'Concluir' : 'Editar'} ${h(r.name)}">${editing ? '✓' : '✎'}</button>
+      </div>
+      ${editing ? libFields(r, `lib-${r.id}`) + `
+        <div class="edit-foot">
+          <button class="link small danger" data-action="lib-del" data-id="${r.id}">Excluir do repositório</button>
+          <button class="btn primary small" data-action="lib-edit" data-id="${r.id}">✓ Concluir</button>
+        </div>` : ''}
+    </li>`;
+}
+// campos do restaurante do repositório (data-lib="<id>.<campo>"; id "new" = rascunho de cadastro)
+function libFields(r, key) {
+  const id = r.id || 'new';
+  const b = (f) => `data-lib="${id}.${f}"`;
+  return `
+    <div class="lib-edit">
+      <div class="form-grid">
+        <label>Nome<input ${b('name')} value="${h(r.name || '')}" placeholder="Nome do restaurante"></label>
+        <label>Cidade<input ${b('city')} value="${h(r.city || '')}" placeholder="Maceió" list="lib-cities"></label>
+        <label>Por pessoa (R$)<input ${b('costPP')} inputmode="decimal" value="${dec(r.costPP)}" placeholder="0"></label>
+        <label>Preço<select ${b('price')}>${opts(PRICE_TAGS, r.price || '', '—')}</select></label>
+        <label>Estilo<select ${b('style')}>${opts(FOOD_STYLES, r.style || '', '—')}</select></label>
+        <label>Link (cardápio, reserva…)<input ${b('url')} type="url" inputmode="url" value="${h(r.url || '')}" placeholder="https://…"></label>
+        <label class="span2">Endereço
+          <span class="input-with-btn"><input ${b('address')} value="${h(r.address || '')}" placeholder="Rua, número, bairro">
+          <button class="icon" data-action="lib-geo" data-id="${id}" title="Buscar no mapa" aria-label="Buscar endereço">🔎</button></span>
+        </label>
+        <div class="span2 lib-geo-results" data-lib-geo="${id}"></div>
+        <span class="span2 small ${hasPos(r) ? 'ok' : 'muted'}">${hasPos(r) ? '✓ Com posição no mapa' : 'Sem posição: use 🔎 para achar o endereço (sem posição, ele não entra na rota)'}</span>
+        <label class="span2">Anotação<input ${b('note')} value="${h(r.note || '')}" placeholder="Prato que vale a pena, reservar antes…"></label>
+      </div>
+    </div>`;
+}
+
+function renderLibrary() {
+  app.dataset.view = 'library';
+  const q = normText(ui.libQuery);
+  const groups = libByCity(lib().filter((r) => libMatches(r, q)));
+  const cities = libByCity(lib()).map((g) => g.city);
+  const draft = ui.libNew;
+  app.innerHTML = `
+    <header class="home-hero lib-hero">
+      <div class="home-top">
+        <span class="brand"><a href="#/" class="back" aria-label="Voltar para minhas viagens">←</a> 🍽️ Meus restaurantes</span>
+        <span class="top-actions"><span id="sync" class="sync"></span>${themeButton()}</span>
+      </div>
+      <p class="lib-sub">${libSummaryTxt()}. Nas viagens, use <b>📚 Do repositório</b> nas refeições para adicionar sem recadastrar.</p>
+    </header>
+    <main class="home lib-page">
+      <div class="lib-tools">
+        <input type="search" class="lib-search" data-lib-search value="${h(ui.libQuery)}" placeholder="Buscar por nome, cidade, estilo…" aria-label="Buscar restaurantes">
+        <button class="btn primary" data-action="lib-new">＋ Restaurante</button>
+        ${store.data.trips.some((t) => t.places.some((p) => p.category === 'comida')) ? '<button class="btn" data-action="lib-import">⤓ Importar de uma viagem</button>' : ''}
+      </div>
+      <datalist id="lib-cities">${cities.map((c) => `<option value="${h(c)}">`).join('')}</datalist>
+      ${draft ? `
+      <section class="card lib-new">
+        <h2>Novo restaurante</h2>
+        ${libFields(draft, 'new')}
+        <div class="edit-foot">
+          <button class="link small" data-action="lib-new-cancel">Cancelar</button>
+          <button class="btn primary small" data-action="lib-new-save">Salvar no repositório</button>
+        </div>
+      </section>` : ''}
+      ${groups.length ? groups.map((g) => `
+        <details class="lib-city" ${ui.libClosed.has(g.key) && !q ? '' : 'open'} data-lib-city="${h(g.key)}">
+          <summary><span>📍 ${h(g.city)}</span><span class="lib-count">${g.items.length}</span></summary>
+          <ul class="lib-list">${g.items.map(libItemHtml).join('')}</ul>
+        </details>`).join('')
+      : `<div class="empty card">${q ? 'Nenhum restaurante encontrado para essa busca.' : 'Seu repositório está vazio. Cadastre um restaurante, importe os de uma viagem ou, no roteiro, use <b>📚 Salvar no repositório</b> num restaurante.'}</div>`}
+    </main>`;
+  renderSync?.();
+}
+
+// Seletor dentro da viagem: escolhe restaurantes do repositório e adiciona como opções do almoço/jantar.
+function libPickerDialog(t, day, meal) {
+  document.getElementById('lib-dialog')?.remove();
+  const city = cityOfTrip(t);
+  const dlg = document.createElement('dialog');
+  dlg.id = 'lib-dialog';
+  dlg.className = 'dialog dialog-wide';
+  const picked = new Set();
+  let q = '';
+  const already = (r) => t.places.some((p) => p.libId === r.id && p.day === day && p.meal === meal);
+  const list = () => {
+    const nq = normText(q);
+    const groups = libByCity(lib().filter((r) => libMatches(r, nq)));
+    // cidade da viagem primeiro
+    groups.sort((a, b) => sameCity(b.city, city) - sameCity(a.city, city));
+    if (!groups.length) return `<p class="muted">${lib().length ? 'Nada encontrado.' : 'O repositório ainda está vazio.'}</p>`;
+    return groups.map((g) => `
+      <details class="lib-city" ${sameCity(g.city, city) || nq || groups.length === 1 ? 'open' : ''}>
+        <summary><span>📍 ${h(g.city)}${sameCity(g.city, city) ? ' <span class="tag">destino</span>' : ''}</span><span class="lib-count">${g.items.length}</span></summary>
+        <ul class="lib-pick">${g.items.map((r) => {
+          const dup = already(r);
+          return `<li><label class="lib-pick-row ${dup ? 'dup' : ''}">
+            <input type="checkbox" value="${r.id}" ${picked.has(r.id) ? 'checked' : ''} ${dup ? 'disabled' : ''}>
+            <span class="grow"><b>${h(r.name)}</b><span class="flags">${foodTags(r)}${num(r.costPP) ? `<span class="muted small">${money(r.costPP, t.currency)}/pessoa</span>` : ''}${dup ? '<span class="muted small">já está nesta refeição</span>' : ''}${hasPos(r) ? '' : '<span class="warn small">sem posição</span>'}</span></span>
+          </label></li>`;
+        }).join('')}</ul>
+      </details>`).join('');
+  };
+  const btnTxt = () => (picked.size ? `Adicionar ${picked.size}` : 'Adicionar');
+  dlg.innerHTML = `
+    <form method="dialog" class="dialog-body">
+      <h2>📚 Do repositório</h2>
+      <p class="muted small">${MEALS[meal].icon} ${MEALS[meal].label} do dia ${day + 1}${city ? ` · restaurantes de <b>${h(city)}</b> aparecem primeiro` : ''}.</p>
+      <input type="search" class="lib-search" placeholder="Buscar…" aria-label="Buscar no repositório">
+      <div class="lib-pick-list">${list()}</div>
+      <div class="dialog-actions">
+        <a class="btn ghost" href="#/restaurantes">Gerenciar repositório</a>
+        <button class="btn" value="cancel">Cancelar</button>
+        <button class="btn primary" value="add" data-lib-add disabled>${btnTxt()}</button>
+      </div>
+    </form>`;
+  document.body.appendChild(dlg);
+  const box = dlg.querySelector('.lib-pick-list');
+  const addBtn = dlg.querySelector('[data-lib-add]');
+  dlg.querySelector('input[type=search]').addEventListener('input', (e) => { q = e.target.value; box.innerHTML = list(); });
+  box.addEventListener('change', (e) => {
+    if (e.target.type !== 'checkbox') return;
+    e.target.checked ? picked.add(e.target.value) : picked.delete(e.target.value);
+    addBtn.textContent = btnTxt();
+    addBtn.disabled = !picked.size;
+  });
+  dlg.querySelector('a.btn').addEventListener('click', () => dlg.close());
+  dlg.addEventListener('close', () => {
+    setTimeout(() => dlg.remove(), 200);
+    if (dlg.returnValue !== 'add' || !picked.size) return;
+    let order = Math.max(-1, ...t.places.filter((p) => p.day === day).map((p) => p.order || 0));
+    const added = [];
+    for (const id of picked) {
+      const r = lib().find((x) => x.id === id);
+      if (!r) continue;
+      t.places.push({ id: uid(), ...libToPlace(r), day, meal, chosen: false, order: ++order });
+      added.push(r.name);
+    }
+    save();
+    renderPanel();
+    toast(added.length === 1 ? `"${added[0]}" adicionado como opção.` : `${added.length} restaurantes adicionados como opções.`, 'ok');
+  });
+  dlg.showModal();
+}
+// botão "salvar no repositório" de um restaurante da viagem
+function libSaveBtn(p) {
+  const inLib = p.libId && lib().some((r) => r.id === p.libId);
+  return `<button class="link small" data-action="lib-save" data-id="${p.id}" title="${inLib ? 'Atualiza o restaurante no repositório com estes dados' : 'Guarda este restaurante para usar em outras viagens'}">📚 ${inLib ? 'Atualizar no repositório' : 'Salvar no repositório'}</button>`;
+}
+
+// grava um campo do repositório (rascunho "new" ou item existente)
+function libSet(el) {
+  const [id, field] = el.dataset.lib.split('.');
+  const r = id === 'new' ? ui.libNew : lib().find((x) => x.id === id);
+  if (!r) return;
+  let v = el.value;
+  if (field === 'costPP') v = num(String(v).includes(',') ? v.replace(/\./g, '').replace(',', '.') : v);
+  r[field] = v;
+  if (field === 'address') { delete r.lat; delete r.lng; }
+  if (id !== 'new') save();
 }
 
 // ---------------------------------------------------------------- tela inicial
@@ -436,6 +633,12 @@ function renderHome() {
           }).join('')}
         </div>
       </section>` : ''}
+
+      <a class="card lib-link" href="#/restaurantes">
+        <span class="lib-link-icon" aria-hidden="true">🍽️</span>
+        <span class="grow"><b>Meus restaurantes</b><span class="muted small">${libSummaryTxt()}</span></span>
+        <span class="tour-chip-go" aria-hidden="true">›</span>
+      </a>
 
       <section class="card">
         <h2>Nova viagem</h2>
@@ -536,13 +739,16 @@ function renderPanel() {
     refreshSize();
   }
   const activeBind = document.activeElement?.dataset?.bind;
-  const html = { roteiro: panelRoteiro, gastos: panelGastos, reservas: panelReservas, resumo: panelResumo }[ui.tab](t);
+  const html = { roteiro: panelRoteiro, gastos: panelGastos, reservas: panelReservas, mala: panelMala, resumo: panelResumo }[ui.tab](t);
   const cancelledBanner = t.cancelled ? `<div class="cancel-banner" role="status">Esta viagem está cancelada.
     <button class="btn small" data-action="trip-restore" data-id="${t.id}">Reativar</button></div>` : '';
   const showMapBar = hidden ? '<button class="map-show-bar" data-action="map-hide">🗺️ Mostrar mapa</button>' : '';
   const chipsScroll = panel.querySelector('.day-chips')?.scrollLeft || 0;
   panel.innerHTML = (ui.pick ? pickBanner() : '') + showMapBar + cancelledBanner + html;
   keepChipInView(panel.querySelector('.day-chips'), chipsScroll);
+  const strip = panel.querySelector('[data-wx-strip]');
+  const focus = strip?.querySelector('[data-focus]');
+  if (strip && focus) strip.scrollLeft = Math.max(0, focus.offsetLeft - strip.offsetLeft - 8);
   if (activeBind) panel.querySelector(`[data-bind="${CSS.escape(activeBind)}"]`)?.focus();
   updateMap();
   if (ui.tab === 'roteiro') ensureWeather(t);
@@ -575,6 +781,71 @@ function wxChip(t, i, big = false) {
   const rain = Number.isFinite(w.rain) && w.rain >= 10 ? ` · 💧${Math.round(w.rain)}%` : '';
   return `<span class="wx ${big ? 'wx-big' : ''} ${w.rain >= 60 ? 'wx-rain' : ''}" title="${h(w.label)}${Number.isFinite(w.rain) ? ` · chance de chuva ${Math.round(w.rain)}%` : ''}"><span aria-hidden="true">${w.icon}</span> ${tempTxt(w.max)}<small>/${tempTxt(w.min)}</small>${rain}</span>`;
 }
+// ---------------------------------------------------------------- tempo hora a hora
+const hh = (x) => `${x}h`;
+const winTxt = (w) => (w.from === w.to ? `às ${hh(w.from)}` : `${hh(w.from)}–${hh(w.to + 1)}`);
+function dayHours(t, i) {
+  const date = tripDays(t)[i];
+  return date && inRange(date, localToday()) ? hourlyAt(dayPos(t, i), date) : null;
+}
+// horário ocupado por um passeio com hora marcada (duração padrão: 1 h)
+function busySpan(p) {
+  const m = /^(\d{1,2}):(\d{2})/.exec(p.time || '');
+  if (!m) return null;
+  const start = +m[1] + +m[2] / 60;
+  return { start, end: start + (num(p.duration) || 60) / 60 };
+}
+// passeios (não restaurantes) com horário que caem numa janela de chuva
+function rainClashes(t, i, wins) {
+  const out = [];
+  for (const p of dayPlaces(t, i)) {
+    if (p.category === 'comida') continue;
+    const sp = busySpan(p);
+    if (!sp) continue;
+    const hit = wins.find((w) => w.from < sp.end && w.to + 1 > sp.start);
+    if (hit) out.push({ p, w: hit, sp });
+  }
+  return out;
+}
+const spanTxt = (sp) => `${Math.floor(sp.start)}h${String(Math.round((sp.start % 1) * 60)).padStart(2, '0').replace(/^00$/, '')}–${Math.floor(sp.end)}h${String(Math.round((sp.end % 1) * 60)).padStart(2, '0').replace(/^00$/, '')}`;
+// Resumo da chuva no dia + faixa hora a hora (recolhida por padrão)
+function hourlyBlock(t, i) {
+  const hours = dayHours(t, i);
+  if (!hours) return '';
+  const date = tripDays(t)[i];
+  const isToday = date === localToday();
+  const nowH = new Date().getHours();
+  const wins = rainWindows(hours);
+  const future = isToday ? wins.filter((w) => w.to >= nowH) : wins;
+  const clashes = rainClashes(t, i, wins);
+  const busy = new Set();
+  dayPlaces(t, i).forEach((p) => { const sp = busySpan(p); if (sp) for (let x = Math.floor(sp.start); x < Math.ceil(sp.end); x++) busy.add(x); });
+  const summary = future.length
+    ? `🌧️ Chuva provável ${future.slice(0, 3).map((w) => `<b>${winTxt(w)}</b>`).join(', ')}${future.length > 3 ? '…' : ''} <span class="muted">(até ${Math.round(Math.max(...future.map((w) => w.pop)))}%)</span>`
+    : `${isToday && wins.length ? '🌤️ Sem mais chuva prevista hoje' : '🌤️ Sem chuva prevista no dia'}`;
+  const focus = isToday ? nowH : (busy.size ? Math.min(...busy) : 7);
+  const cells = hours.map((x) => {
+    const pop = Number.isFinite(x.pop) ? Math.round(x.pop) : null;
+    const cls = [isRainy(x) ? 'rainy' : '', isToday && x.hour === nowH ? 'now' : '', isToday && x.hour < nowH ? 'past' : '', busy.has(x.hour) ? 'busy' : ''].filter(Boolean).join(' ');
+    return `<div class="wx-h ${cls}" ${x.hour === focus ? 'data-focus' : ''} title="${hh(x.hour)} · ${h(x.label)}${pop != null ? ` · chuva ${pop}%` : ''}${Number.isFinite(x.mm) && x.mm > 0 ? ` · ${String(x.mm).replace('.', ',')} mm` : ''}">
+      <small>${isToday && x.hour === nowH ? 'agora' : hh(x.hour)}</small>
+      <span class="wx-ic" aria-hidden="true">${x.icon}</span>
+      <b>${tempTxt(x.temp)}</b>
+      <span class="wx-bar" aria-hidden="true"><i style="height:${pop || 0}%"></i></span>
+      <small class="wx-pop">${pop != null ? `${pop}%` : '–'}</small>
+    </div>`;
+  }).join('');
+  return `
+    <section class="wx-hourly ${ui.wxOpen ? 'open' : ''}" aria-label="Previsão hora a hora">
+      <button class="wx-sum" data-action="wx-toggle" aria-expanded="${ui.wxOpen}">
+        <span class="grow">${summary}</span><span class="wx-more">${ui.wxOpen ? 'fechar ▴' : 'hora a hora ▾'}</span>
+      </button>
+      ${clashes.map(({ p, w, sp }) => `<div class="wx-warn">⚠️ <b>${h(p.name)}</b> (${spanTxt(sp)}) — chuva prevista ${winTxt(w)} (${Math.round(w.pop)}%)</div>`).join('')}
+      ${ui.wxOpen ? `<div class="wx-strip" data-wx-strip>${cells}</div>
+        <div class="wx-legend muted small"><span><i class="lg-rain"></i> chuva provável</span>${busy.size ? '<span><i class="lg-busy"></i> passeio marcado</span>' : ''}<span>Fonte: Open-Meteo</span></div>` : ''}
+    </section>`;
+}
+
 // Busca a previsão dos locais da viagem (uma consulta por local, com cache de 3 h).
 let wxAsked = '';
 function ensureWeather(t) {
@@ -634,6 +905,13 @@ function todayCard(t, i) {
         <div><span class="today-kicker">Hoje</span> <b>Dia ${i + 1}</b> <span class="muted small">${WEEKDAYS[new Date(`${tripDays(t)[i]}T12:00`).getDay()]}</span></div>
         ${wxChip(t, i, true)}
       </div>
+      ${(() => {
+        const hrs = dayHours(t, i);
+        if (!hrs) return '';
+        const nowH = new Date().getHours();
+        const wins = rainWindows(hrs).filter((w) => w.to >= nowH);
+        return `<div class="today-rain">${wins.length ? `🌧️ Chuva provável ${wins.slice(0, 3).map(winTxt).join(', ')}` : '🌤️ Sem chuva prevista para o resto do dia'}</div>`;
+      })()}
       ${nextHtml}
       ${ps.length > 1 ? `<ol class="today-list">${ps.map((p) => `
         <li class="${p.done ? 'done' : ''} ${p === next ? 'is-next' : ''}">
@@ -1392,7 +1670,10 @@ function mealsBlock(t, i, rf) {
             <div class="grow"><b>${info.label}</b>
               <div class="muted small">${plan.chosen ? `Escolhido: ${h(plan.chosen.name)}` : plan.opts.length ? `${plan.opts.length} opç${plan.opts.length === 1 ? 'ão' : 'ões'} · escolha uma` : 'Nenhuma opção ainda'}${plan.value ? ` · ${money(plan.value, t.currency)}${plan.basis === 'escolhido' ? '' : ` <span class="muted">(${plan.basis})</span>`}` : ''}</div>
             </div>
-            <button class="btn small" data-action="meal-add" data-day="${i}" data-meal="${m}">＋ Opção</button>
+            <div class="meal-btns">
+              <button class="btn small ghost" data-action="lib-pick" data-day="${i}" data-meal="${m}" title="Escolher do repositório de restaurantes">📚 Do repositório</button>
+              <button class="btn small" data-action="meal-add" data-day="${i}" data-meal="${m}">＋ Opção</button>
+            </div>
           </div>
           ${plan.opts.length ? `<ul class="meal-opts">${plan.opts.map((p) => `
             <li class="meal-opt ${p.chosen ? 'chosen' : ''} ${ui.editOpt === p.id ? 'editing' : ''}">
@@ -1423,6 +1704,7 @@ function optEditPanel(t, p) {
       <div class="edit-foot">
         <button class="link small danger" data-action="remove-place" data-id="${p.id}">Remover</button>
         <button class="link small" data-action="pick" data-kind="place" data-id="${p.id}" data-prefix="" data-label="${h(p.name)}">📍 ${hasPos(p) ? 'Ajustar no mapa' : 'Marcar no mapa'}</button>
+        ${libSaveBtn(p)}
         <button class="btn primary small" data-action="opt-edit" data-id="${p.id}">✓ Concluir</button>
       </div>
     </li>`;
@@ -1573,7 +1855,7 @@ function panelRoteiro(t) {
               <label>Custo (${h(t.currency)})<input inputmode="decimal" data-bind="place:${p.id}.cost" data-type="number" data-rerender value="${dec(p.cost)}" placeholder="0"></label>`}
               <label>Tipo<select data-bind="place:${p.id}.category" data-rerender>${opts(CATEGORIES, p.category)}</select></label>
             </div>
-            ${p.category === 'comida' ? foodFields(t, p) : tourChip(p)}
+            ${p.category === 'comida' ? foodFields(t, p) + `<div class="lib-save-row">${libSaveBtn(p)}</div>` : tourChip(p)}
             <label>Anotação<input class="note" placeholder="Anotação" data-bind="place:${p.id}.note" value="${h(p.note)}"></label>
             <div class="row wrap small">
               <button class="link" data-action="pick" data-kind="place" data-id="${p.id}" data-prefix="" data-label="${h(p.name)}">📍 ${hasPos(p) ? 'Ajustar no mapa' : 'Marcar no mapa'}</button>
@@ -1600,6 +1882,7 @@ function panelRoteiro(t) {
         </div>
       </div>
       ${kmText || breakdown || timeText ? `<p class="muted small breakdown">${[kmText, timeText, breakdown].filter(Boolean).join('<br>')}</p>` : ''}
+      ${hourlyBlock(t, i)}
       ${unlocated.map((f) => `<div class="hint">✈️ ${h(f.from)} → ${h(f.to)}: adicione o endereço do aeroporto em Reservas para ele entrar na rota.</div>`).join('')}
       <ol class="stops">
         ${arrivals.map((f) => flightRow(t, f, 'arrive')).join('')}
@@ -2213,6 +2496,49 @@ function placesSummary(t, kind) {
     <p class="muted small">${food ? 'Só os restaurantes que entraram no roteiro: as opções escolhidas de almoço/jantar e os restaurantes adicionados direto em um dia.' : 'Passeios ativos do roteiro (alternativas não escolhidas ficam de fora).'} O mapa mostra só estes lugares.</p>`;
 }
 
+// ---------------------------------------------------------------- mala
+function panelMala(t) {
+  const pk = ensurePacking(t);
+  const days = Math.max(1, tripDays(t).length);
+  const L = packingList(t, days);
+  const pct = L.total ? Math.round((L.done / L.total) * 100) : 0;
+  const q = (x) => (x.qty ? ` <span class="pack-qty">× ${x.qty}</span>` : '');
+  return `
+    <section class="card pack-head">
+      <div class="row">
+        <div class="grow"><h2>🧳 Mala</h2><div class="muted small">${days} dia${days > 1 ? 's' : ''} · quantidades de roupa calculadas para a viagem${days > 7 ? ' (até 7 mudas, contando com lavar roupa)' : ''}</div></div>
+        <div class="pack-count"><b>${L.done}</b>/${L.total}</div>
+      </div>
+      <div class="bar ${pct === 100 ? 'full' : ''}"><div style="width:${pct}%"></div></div>
+      <div class="muted small pack-types-h">Tipo de viagem (escolha quantos quiser — o básico já está incluído):</div>
+      <div class="pack-types">
+        ${Object.entries(TRIP_TYPES).map(([k, v]) => `<button class="chip-btn ${pk.types.includes(k) ? 'active' : ''}" data-action="pack-type" data-type="${k}" aria-pressed="${pk.types.includes(k)}">${v.icon} ${v.label}</button>`).join('')}
+      </div>
+    </section>
+    <form class="pack-add card" data-form="pack-add">
+      <input name="text" placeholder="Adicionar item (ex.: carregador da câmera)" aria-label="Novo item" autocomplete="off">
+      <select name="cat" aria-label="Categoria">${Object.entries(PACK_CATS).map(([k, v]) => `<option value="${k}" ${k === (ui.packCat || 'outros') ? 'selected' : ''}>${v}</option>`).join('')}</select>
+      <button class="btn primary" type="submit">＋</button>
+    </form>
+    ${L.groups.map((g) => {
+      const d = g.items.filter((x) => x.done).length;
+      const closed = ui.packClosed.has(g.cat);
+      return `
+      <details class="pack-group ${d === g.items.length ? 'complete' : ''}" data-pack-cat="${g.cat}" ${closed ? '' : 'open'}>
+        <summary><span>${g.label}</span><span class="pack-gcount">${d}/${g.items.length}</span></summary>
+        <ul>${g.items.map((x) => `
+          <li class="${x.done ? 'done' : ''}">
+            <label><input type="checkbox" data-pack="${h(x.key)}" ${x.done ? 'checked' : ''}><span>${h(x.text)}${q(x)}</span></label>
+            <button class="icon small-icon pack-x" data-action="pack-hide" data-key="${h(x.key)}" title="${x.custom ? 'Excluir item' : 'Não preciso deste item'}" aria-label="${x.custom ? 'Excluir' : 'Ocultar'} ${h(x.text)}">✕</button>
+          </li>`).join('')}</ul>
+      </details>`;
+    }).join('')}
+    <div class="pack-foot">
+      ${L.done ? '<button class="btn small ghost" data-action="pack-reset">↺ Desmarcar tudo (mala da volta)</button>' : ''}
+      ${L.hidden ? `<button class="btn small ghost" data-action="pack-unhide">Mostrar ${L.hidden} item${L.hidden > 1 ? 's' : ''} oculto${L.hidden > 1 ? 's' : ''}</button>` : ''}
+    </div>`;
+}
+
 function panelResumo(t) {
   if (ui.resTab !== 'custos') return resumoTabs(t) + placesSummary(t, ui.resTab);
   return resumoTabs(t) + panelResumoCustos(t);
@@ -2535,9 +2861,21 @@ function setBound(t, path, el) {
 document.addEventListener('input', (e) => {
   const el = e.target;
   if (el.dataset?.np && el.tagName !== 'SELECT') ui.np[el.dataset.np] = el.value;
+  if (el.matches?.('[data-lib-search]')) {
+    ui.libQuery = el.value;
+    const pos = el.selectionStart;
+    renderLibrary();
+    const ni = document.querySelector('[data-lib-search]');
+    ni?.focus(); ni?.setSelectionRange(pos, pos);
+  }
+  if (el.dataset?.lib && el.tagName !== 'SELECT') libSet(el);
 });
 
 document.addEventListener('toggle', (e) => {
+  const pc = e.target.dataset?.packCat;
+  if (pc) e.target.open ? ui.packClosed.delete(pc) : ui.packClosed.add(pc);
+  const lc = e.target.dataset?.libCity;
+  if (lc != null && !normText(ui.libQuery)) e.target.open ? ui.libClosed.delete(lc) : ui.libClosed.add(lc);
   const key = e.target.dataset?.openKey;
   if (key) e.target.open ? ui.open.add(key) : ui.open.delete(key);
 }, true);
@@ -2545,6 +2883,7 @@ document.addEventListener('toggle', (e) => {
 document.addEventListener('change', (e) => {
   const el = e.target;
   if (el.matches('[data-action="import"]')) return importBackup(el);
+  if (el.dataset?.lib) { libSet(el); if (el.tagName === 'SELECT' || el.dataset.lib.endsWith('.city')) renderLibrary(); return; }
   if (el.dataset?.np) {
     ui.np[el.dataset.np] = el.dataset.np === 'day' ? (el.value === '' ? null : Number(el.value)) : el.value;
     if (['category', 'meal', 'day'].includes(el.dataset.np)) renderPanel();
@@ -2581,6 +2920,18 @@ document.addEventListener('submit', async (e) => {
     save();
     location.hash = `#/t/${nt.id}/reservas`;
     locateDest(nt).then(() => ui.tripId === nt.id && updateMap()).catch(() => {});
+    return;
+  }
+  if (kind === 'pack-add') {
+    const text = (fd.text || '').trim();
+    if (!text) return form.text.focus();
+    const pk = ensurePacking(t);
+    pk.custom.push({ key: `c-${uid()}`, text, cat: fd.cat || 'outros' });
+    ui.packCat = fd.cat;
+    ui.packClosed.delete(fd.cat);
+    save();
+    renderPanel();
+    document.querySelector('.pack-add input[name=text]')?.focus();
     return;
   }
   if (kind === 'expense') {
@@ -2625,6 +2976,33 @@ document.addEventListener('keydown', (e) => {
   ui.editOpt = null;
   renderPanel();
   document.querySelector(`[data-action="opt-edit"][data-id="${id}"]`)?.focus({ preventScroll: true });
+});
+
+// mala: marcar item (atualiza contadores sem redesenhar a tela toda)
+document.addEventListener('change', (e) => {
+  const key = e.target.dataset?.pack;
+  const t = trip();
+  if (key == null || !t) return;
+  const pk = ensurePacking(t);
+  if (e.target.checked) pk.done[key] = true; else delete pk.done[key];
+  save();
+  e.target.closest('li')?.classList.toggle('done', e.target.checked);
+  const L = packingList(t, Math.max(1, tripDays(t).length));
+  const pct = L.total ? Math.round((L.done / L.total) * 100) : 0;
+  const head = document.querySelector('.pack-head');
+  if (head) {
+    head.querySelector('.pack-count').innerHTML = `<b>${L.done}</b>/${L.total}`;
+    head.querySelector('.bar > div').style.width = `${pct}%`;
+    head.querySelector('.bar').classList.toggle('full', pct === 100);
+  }
+  const grp = e.target.closest('details');
+  if (grp) {
+    const boxes = [...grp.querySelectorAll('input[data-pack]')];
+    const d = boxes.filter((b) => b.checked).length;
+    grp.querySelector('.pack-gcount').textContent = `${d}/${boxes.length}`;
+    grp.classList.toggle('complete', d === boxes.length);
+  }
+  if (pct === 100 && e.target.checked) toast('🧳 Mala pronta! Boa viagem.', 'ok');
 });
 
 // como chegar a um ponto (trecho escolhido à mão)
@@ -2704,6 +3082,126 @@ document.addEventListener('click', async (e) => {
       save();
       return renderPanel();
     }
+    case 'lib-pick':
+      return libPickerDialog(t, Number(el.dataset.day), el.dataset.meal);
+    case 'lib-save': {
+      const p = t.places.find((x) => x.id === el.dataset.id);
+      if (!p) return;
+      const { created } = libUpsert(lib(), p, cityOfTrip(t));
+      save();
+      toast(created ? `"${p.name}" salvo em Meus restaurantes (${cityOfTrip(t) || 'sem cidade'}).` : `"${p.name}" atualizado em Meus restaurantes.`, 'ok');
+      return renderPanel();
+    }
+    case 'lib-new':
+      ui.libNew = { city: ui.libLastCity || '' };
+      renderLibrary();
+      document.querySelector('[data-lib="new.name"]')?.focus();
+      return;
+    case 'lib-new-cancel':
+      ui.libNew = null;
+      return renderLibrary();
+    case 'lib-new-save': {
+      const d = ui.libNew;
+      if (!d?.name?.trim()) { toast('Dê um nome ao restaurante.', 'warn'); document.querySelector('[data-lib="new.name"]')?.focus(); return; }
+      if (libFind(lib(), d.name, d.city)) { toast(`"${d.name}" já está em ${d.city || 'sem cidade'}.`, 'warn'); return; }
+      const item = libFromPlace(d, d.city);
+      lib().push(item);
+      ui.libLastCity = d.city || '';
+      ui.libNew = null;
+      save();
+      toast(`"${item.name}" salvo.`, 'ok');
+      return renderLibrary();
+    }
+    case 'lib-edit':
+      ui.libEdit = ui.libEdit === el.dataset.id ? null : el.dataset.id;
+      return renderLibrary();
+    case 'lib-del': {
+      const r = lib().find((x) => x.id === el.dataset.id);
+      if (!r) return;
+      const uses = libUses(r);
+      if (!await confirmDialog({ title: `Excluir "${r.name}"?`, message: `Sai do repositório.${uses ? ` As ${uses} viage${uses > 1 ? 'ns' : 'm'} que já usam este restaurante continuam com a cópia delas.` : ''}`, confirmLabel: 'Excluir', danger: true })) return;
+      store.data.library = lib().filter((x) => x !== r);
+      ui.libEdit = null;
+      save();
+      return renderLibrary();
+    }
+    case 'lib-geo': {
+      const id = el.dataset.id;
+      const r = id === 'new' ? ui.libNew : lib().find((x) => x.id === id);
+      const box = document.querySelector(`[data-lib-geo="${id}"]`);
+      if (!r || !box) return;
+      const query = [r.address || r.name, r.city].filter(Boolean).join(', ');
+      if (!query.trim()) { toast('Preencha o nome ou o endereço.', 'warn'); return; }
+      box.innerHTML = '<span class="muted small"><span class="spin-sm"></span> Procurando…</span>';
+      try {
+        let res = await geocode(query);
+        if (!res.results.length && r.address) res = await geocode([r.name, r.city].filter(Boolean).join(', '));
+        ui.libGeo = { id, results: res.results };
+        box.innerHTML = res.results.length
+          ? res.results.slice(0, 5).map((x, k) => `<button class="geo-result" data-action="lib-geo-use" data-id="${id}" data-k="${k}"><span class="grow"><b>${h(x.name)}</b><span class="muted small">${h(x.address || '')}</span></span></button>`).join('')
+          : '<span class="muted small">Nada encontrado. Tente o endereço completo.</span>';
+      } catch (err) {
+        box.innerHTML = `<span class="error small">${h(err.message)}</span>`;
+      }
+      return;
+    }
+    case 'lib-geo-use': {
+      const id = el.dataset.id;
+      const r = id === 'new' ? ui.libNew : lib().find((x) => x.id === id);
+      const x = ui.libGeo?.id === id ? ui.libGeo.results[Number(el.dataset.k)] : null;
+      if (!r || !x) return;
+      r.lat = x.lat; r.lng = x.lng;
+      if (!r.address) r.address = x.address || x.name;
+      ui.libGeo = null;
+      if (id !== 'new') save();
+      return renderLibrary();
+    }
+    case 'lib-import': {
+      const trips = store.data.trips.filter((tr) => tr.places.some((p) => p.category === 'comida'));
+      const choice = await choiceDialog({
+        title: 'Importar restaurantes',
+        message: 'Todos os restaurantes da viagem (escolhidos e opções) entram no repositório, na cidade do destino. Os que já existem são atualizados.',
+        choices: trips.map((tr) => ({ value: tr.id, label: tr.name || tr.destination, hint: `${tr.places.filter((p) => p.category === 'comida').length} restaurantes · ${cityOfTrip(tr) || 'sem cidade'}` })),
+      });
+      const tr = trips.find((x) => x.id === choice);
+      if (!tr) return;
+      let created = 0, updated = 0;
+      for (const p of tr.places.filter((x) => x.category === 'comida' && x.name?.trim())) {
+        libUpsert(lib(), p, cityOfTrip(tr)).created ? created++ : updated++;
+      }
+      save();
+      toast(`${created} novo${created === 1 ? '' : 's'}${updated ? ` · ${updated} atualizado${updated === 1 ? '' : 's'}` : ''} em ${cityOfTrip(tr) || 'sem cidade'}.`, 'ok');
+      return renderLibrary();
+    }
+    case 'pack-type': {
+      const pk = ensurePacking(t);
+      const k = el.dataset.type;
+      pk.types = pk.types.includes(k) ? pk.types.filter((x) => x !== k) : [...pk.types, k];
+      save();
+      return renderPanel();
+    }
+    case 'pack-hide': {
+      const pk = ensurePacking(t);
+      const k = el.dataset.key;
+      if (pk.custom.some((c) => c.key === k)) pk.custom = pk.custom.filter((c) => c.key !== k);
+      else pk.hidden[k] = true;
+      delete pk.done[k];
+      save();
+      return renderPanel();
+    }
+    case 'pack-unhide':
+      ensurePacking(t).hidden = {};
+      save();
+      return renderPanel();
+    case 'pack-reset':
+      if (!await confirmDialog({ title: 'Desmarcar todos os itens?', message: 'Útil para conferir a mala na volta. Os tipos de viagem e os itens continuam iguais.', confirmLabel: 'Desmarcar' })) return;
+      ensurePacking(t).done = {};
+      save();
+      return renderPanel();
+    case 'wx-toggle':
+      ui.wxOpen = !ui.wxOpen;
+      savePref('roteiro:wxHourly', ui.wxOpen ? '1' : '0');
+      return renderPanel();
     case 'detail-open':
       ui.detail = el.dataset.id;
       ui.detailAll = false;
