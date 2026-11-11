@@ -1142,3 +1142,8 @@ select.leg-mode.manual { border-color: var(--primary); color: var(--primary); fo
 .stop-compact .stop-head { align-items: flex-start; }
 .stop-compact .stop-head > .num { margin-top: .15rem; }
 .stop-compact > .tour-chip { margin-top: -.05rem; }
+/* cabeçalho da refeição: se faltar espaço, os botões descem para a linha de baixo */
+.meal-head { flex-wrap: wrap; row-gap: .5rem; }
+.meal-head > .grow { flex: 1 1 180px; }
+.meal-head .meal-btns { margin-left: auto; flex: 0 1 auto; }
+@media (max-width: 520px) { .meal-head .meal-btns { flex: 1 1 100%; } .meal-head .meal-btns .btn { flex: 1; } }
