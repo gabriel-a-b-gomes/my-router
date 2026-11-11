@@ -991,6 +991,14 @@ function pickBanner() {
 }
 
 function reopenAttrDialog() {
+  if (ui.reopenPlace) {
+    const pid = ui.reopenPlace;
+    ui.reopenPlace = null;
+    const t = trip();
+    const p = t?.places.find((x) => x.id === pid);
+    if (p) placeDialog(t, p);
+    return;
+  }
   const id = ui.reopenAttr;
   ui.reopenAttr = null;
   const t = trip();
@@ -1682,33 +1690,94 @@ function mealsBlock(t, i, rf) {
                 <b>${h(p.name)}</b>
                 <div class="flags">${foodTags(p)}${num(p.costPP) ? `<span class="muted small">${money(p.costPP, t.currency)}/pessoa${n > 1 ? ` · ${money(placeCost(t, p), t.currency)}` : ''}</span>` : ''}${hasPos(p) ? '' : '<span class="warn small">sem posição</span>'}</div>
               </div>
-              ${ui.editOpt === p.id
-                ? `<button class="icon small-icon done-icon" data-action="opt-edit" data-id="${p.id}" aria-expanded="true" aria-label="Concluir edição de ${h(p.name)}" title="Concluir edição">✓</button>`
-                : `<button class="icon small-icon" data-action="opt-edit" data-id="${p.id}" aria-expanded="false" aria-label="Editar ${h(p.name)}" title="Editar">✎</button>
-              <button class="icon small-icon danger" data-action="remove-place" data-id="${p.id}" aria-label="Remover ${h(p.name)}" title="Remover">✕</button>`}
-            </li>
-            ${ui.editOpt === p.id ? optEditPanel(t, p) : ''}`).join('')}</ul>` : ''}
+              <button class="icon small-icon" data-action="opt-edit" data-id="${p.id}" aria-label="Editar ${h(p.name)}" title="Editar">✎</button>
+              <button class="icon small-icon danger" data-action="remove-place" data-id="${p.id}" aria-label="Remover ${h(p.name)}" title="Remover">✕</button>
+            </li>`).join('')}</ul>` : ''}
         </div>`;
       }).join('')}
       <p class="muted small">Sem restaurante escolhido, o previsto usa a média das opções ou o orçamento por pessoa (Reservas → Orçamento diário).</p>
     </section>`;
 }
 
-// Painel de edição de uma opção de restaurante: título claro e botão "Concluir" para fechar.
-function optEditPanel(t, p) {
-  return `
-    <li class="opt-edit" id="opt-edit-${p.id}">
-      <label>Nome<input data-bind="place:${p.id}.name" value="${h(p.name)}" placeholder="Nome do restaurante"></label>
-      ${foodFields(t, p)}
-      <label>Anotação<input class="note" placeholder="Prato, reserva, link…" data-bind="place:${p.id}.note" value="${h(p.note)}"></label>
-      <div class="edit-foot">
-        <button class="link small danger" data-action="remove-place" data-id="${p.id}">Remover</button>
-        <button class="link small" data-action="pick" data-kind="place" data-id="${p.id}" data-prefix="" data-label="${h(p.name)}">📍 ${hasPos(p) ? 'Ajustar no mapa' : 'Marcar no mapa'}</button>
-        ${libSaveBtn(p)}
-        <button class="btn primary small" data-action="opt-edit" data-id="${p.id}">✓ Concluir</button>
-      </div>
-    </li>`;
+// modo do trecho que chega a um lugar (para o link de navegação)
+function legCatInto(rf, owner) {
+  const k = rf.owners.findIndex((o) => o.includes(owner));
+  return k > 0 ? rf.legs[k - 1]?.cat : 'drive';
 }
+
+// ---------------------------------------------------------------- modal de edição do lugar
+// Tudo o que antes ficava aberto no cartão: a timeline mostra só o resumo e os atalhos.
+function placeDialogBody(t, p) {
+  const food = p.category === 'comida';
+  const i = Number.isInteger(p.day) ? p.day : null;
+  return `
+    <form method="dialog" class="dialog-body place-dlg">
+      <div class="pd-head">
+        <span class="num" style="--c:${i != null ? dayColor(i) : 'var(--primary)'}">${catIcon(p.category)}</span>
+        <div class="grow"><h2>${h(p.name || 'Sem nome')}</h2><div class="muted small">${placeMeta(p)}</div></div>
+        <button type="button" class="icon small-icon" data-pd-close aria-label="Fechar">✕</button>
+      </div>
+      <label>Nome<input data-bind="place:${p.id}.name" value="${h(p.name)}" placeholder="Nome"></label>
+      ${food ? '' : `<label>Dia${daySelect(t, p.day, `data-bind="place:${p.id}.day" data-rerender`)}</label>`}
+      <div class="stop-fields">
+        <label>Horário<input type="time" data-bind="place:${p.id}.time" data-rerender value="${h(p.time)}"></label>
+        ${food ? '' : `
+        <label>Duração${durationSelect(`data-bind="place:${p.id}.duration" data-type="number" data-rerender`, p.duration)}</label>
+        <label>Custo (${h(t.currency)})<input inputmode="decimal" data-bind="place:${p.id}.cost" data-type="number" data-rerender value="${dec(p.cost)}" placeholder="0"></label>`}
+        <label>Tipo<select data-bind="place:${p.id}.category" data-rerender>${opts(CATEGORIES, p.category)}</select></label>
+      </div>
+      ${food ? foodFields(t, p) : ''}
+      <label>Anotação<input class="note" placeholder="Prato, reserva, horário de funcionamento…" data-bind="place:${p.id}.note" value="${h(p.note)}"></label>
+      <div class="pd-links">
+        <button type="button" class="btn small" data-action="pick" data-kind="place" data-id="${p.id}" data-prefix="" data-label="${h(p.name)}">📍 ${hasPos(p) ? 'Ajustar no mapa' : 'Marcar no mapa'}</button>
+        ${hasPos(p) ? `<a class="btn small" href="https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}" target="_blank" rel="noopener">🗺️ Abrir no mapa</a>` : ''}
+        ${food ? libSaveBtn(p).replace('class="link small"', 'type="button" class="btn small"') : `
+        <button type="button" class="btn small" data-action="attr-open" data-id="${p.id}">🎟️ Atrações${p.attractions?.length ? ` (${p.attractions.length})` : ''}</button>
+        ${p.attractions?.length ? `<button type="button" class="btn small" data-action="detail-open" data-id="${p.id}">🔍 Detalhes</button>` : ''}
+        <button type="button" class="btn small" data-action="alt-add" data-kind="place" data-id="${p.id}">⇄ Alternativa</button>`}
+      </div>
+      <div class="edit-foot">
+        <button type="button" class="link small danger" data-action="remove-place" data-id="${p.id}">Remover</button>
+        ${food ? '' : `<button type="button" class="link small" data-action="place-disable" data-id="${p.id}" title="Tira do roteiro sem apagar">⏸ Desativar</button>`}
+        <button class="btn primary small" value="ok">✓ Concluir</button>
+      </div>
+    </form>`;
+}
+function placeDialog(t, p) {
+  document.getElementById('place-dialog')?.remove();
+  const dlg = document.createElement('dialog');
+  dlg.id = 'place-dialog';
+  dlg.className = 'dialog dialog-wide';
+  dlg.dataset.id = p.id;
+  dlg.innerHTML = placeDialogBody(t, p);
+  document.body.appendChild(dlg);
+  // redesenha o conteúdo (ex.: trocar o tipo para restaurante muda os campos), mantendo foco e rolagem
+  const refresh = () => {
+    const cur = trip()?.places.find((x) => x.id === p.id);
+    if (!cur || !dlg.open) { if (dlg.open) dlg.close(); return; }
+    const body = dlg.querySelector('.dialog-body');
+    const top = body?.scrollTop || 0;
+    const focus = document.activeElement?.dataset?.bind;
+    dlg.innerHTML = placeDialogBody(trip(), cur);
+    dlg.querySelector('.dialog-body').scrollTop = top;
+    if (focus) dlg.querySelector(`[data-bind="${focus}"]`)?.focus({ preventScroll: true });
+  };
+  dlg.addEventListener('change', () => setTimeout(refresh, 20));
+  dlg.addEventListener('click', (e) => {
+    if (e.target === dlg || e.target.closest('[data-pd-close]')) return dlg.close();
+    const a = e.target.closest('[data-action]')?.dataset.action;
+    // ações que levam para outra tela/modal: fecha este antes (o clique segue para o handler geral)
+    if (['pick', 'attr-open', 'detail-open', 'alt-add', 'place-disable'].includes(a)) {
+      if (a === 'pick') ui.reopenPlace = p.id;
+      dlg.close();
+    }
+    if (a === 'lib-save') setTimeout(refresh, 50);
+  });
+  dlg.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.tagName === 'INPUT') { e.preventDefault(); e.target.blur(); } });
+  dlg.addEventListener('close', () => { setTimeout(() => dlg.remove(), 200); renderPanel(); });
+  dlg.showModal();
+}
+
 
 // campos de um restaurante (no cartão do roteiro e na edição da opção)
 function foodFields(t, p) {
@@ -1833,38 +1902,24 @@ function panelRoteiro(t) {
       const k = n++;
       return `
           ${legRow(rf, p.id)}
-          <li class="card stop">
+          <li class="card stop stop-compact ${p.done ? 'is-done' : ''}">
             <div class="stop-head">
               <span class="num" style="--c:${dayColor(i)}">${k + 1}</span>
-              <div class="grow">
-                <b>${h(p.name)}</b>
-                <div class="muted small">${placeMeta(p)}${p.done ? ' · <span class="ok">✓ feito</span>' : ''}</div>
-                ${p.category === 'comida' ? `<div class="flags">${p.meal ? `<span class="flag flag-meal">${MEAL_LABELS[p.meal]}</span>` : ''}${foodTags(p)}</div>` : ''}
-              </div>
+              <button class="stop-main" data-action="place-edit" data-id="${p.id}" title="Editar ${h(p.name)}">
+                <span class="stop-title">${p.time ? `<span class="stop-time">${h(p.time)}</span>` : ''}<b>${h(p.name)}</b></span>
+                <span class="muted small">${placeMeta(p)}${p.done ? ' · <span class="ok">✓ feito</span>' : ''}</span>
+                ${p.category === 'comida' && (p.meal || p.price || p.style) ? `<span class="flags">${p.meal ? `<span class="flag flag-meal">${MEAL_LABELS[p.meal]}</span>` : ''}${foodTags(p)}</span>` : ''}
+                ${p.note ? `<span class="stop-note">📝 ${h(p.note)}</span>` : ''}
+              </button>
               ${odometer(rf, p.id)}
-              <div class="stop-actions">
+              <div class="stop-actions stop-grid">
                 <button class="icon" data-action="move" data-id="${p.id}" data-dir="-1" ${k === 0 ? 'disabled' : ''} aria-label="Subir">↑</button>
                 <button class="icon" data-action="move" data-id="${p.id}" data-dir="1" ${k === ps.length - 1 ? 'disabled' : ''} aria-label="Descer">↓</button>
+                ${hasPos(p) ? `<a class="icon" href="https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}&travelmode=${GMAPS_MODE[legCatInto(rf, p.id)] || 'driving'}" target="_blank" rel="noopener" title="Navegar até aqui" aria-label="Navegar até ${h(p.name)}">🧭</a>` : `<button class="icon warn-icon" data-action="pick" data-kind="place" data-id="${p.id}" data-prefix="" data-label="${h(p.name)}" title="Sem posição: marcar no mapa" aria-label="Marcar ${h(p.name)} no mapa">📍</button>`}
+                <button class="icon" data-action="place-edit" data-id="${p.id}" title="Editar" aria-label="Editar ${h(p.name)}">✎</button>
               </div>
             </div>
-            ${p.category === 'comida' ? '' : `<label class="stop-day">Dia${daySelect(t, p.day, `data-bind="place:${p.id}.day" data-rerender`)}</label>`}
-            <div class="stop-fields">
-              <label>Horário<input type="time" data-bind="place:${p.id}.time" data-rerender value="${h(p.time)}"></label>
-              ${p.category === 'comida' ? '' : `
-              <label>Duração${durationSelect(`data-bind="place:${p.id}.duration" data-type="number" data-rerender`, p.duration)}</label>
-              <label>Custo (${h(t.currency)})<input inputmode="decimal" data-bind="place:${p.id}.cost" data-type="number" data-rerender value="${dec(p.cost)}" placeholder="0"></label>`}
-              <label>Tipo<select data-bind="place:${p.id}.category" data-rerender>${opts(CATEGORIES, p.category)}</select></label>
-            </div>
-            ${p.category === 'comida' ? foodFields(t, p) + `<div class="lib-save-row">${libSaveBtn(p)}</div>` : tourChip(p)}
-            <label>Anotação<input class="note" placeholder="Anotação" data-bind="place:${p.id}.note" value="${h(p.note)}"></label>
-            <div class="row wrap small">
-              <button class="link" data-action="pick" data-kind="place" data-id="${p.id}" data-prefix="" data-label="${h(p.name)}">📍 ${hasPos(p) ? 'Ajustar no mapa' : 'Marcar no mapa'}</button>
-              ${hasPos(p) ? `<a href="https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lng}#map=17/${p.lat}/${p.lng}" target="_blank" rel="noopener">Abrir no mapa</a>` : ''}
-              ${p.category === 'comida' ? '' : `<button class="link" data-action="attr-open" data-id="${p.id}">🎟️ Atrações${p.attractions?.length ? ` (${p.attractions.length})` : ''}</button>`}
-              ${p.category === 'comida' ? '' : `<button class="link" data-action="alt-add" data-kind="place" data-id="${p.id}">⇄ Alternativa</button>`}
-              ${p.category === 'comida' ? '' : `<button class="link push-right" data-action="place-disable" data-id="${p.id}" title="Tira do roteiro sem apagar">⏸ Desativar</button>`}
-              <button class="link danger ${p.category === 'comida' ? 'push-right' : ''}" data-action="remove-place" data-id="${p.id}">Remover</button>
-            </div>
+            ${p.category === 'comida' ? '' : tourChip(p)}
             ${p.category === 'comida' ? '' : attractionChecklist(t, p)}
             ${placeAlternatives(t, p)}
           </li>`;
@@ -2969,14 +3024,6 @@ document.addEventListener('submit', async (e) => {
 });
 
 // ---------------------------------------------------------------- cliques
-// Esc fecha a edição da opção de restaurante
-document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape' || !ui.editOpt || document.querySelector('dialog[open]')) return;
-  const id = ui.editOpt;
-  ui.editOpt = null;
-  renderPanel();
-  document.querySelector(`[data-action="opt-edit"][data-id="${id}"]`)?.focus({ preventScroll: true });
-});
 
 // mala: marcar item (atualiza contadores sem redesenhar a tela toda)
 document.addEventListener('change', (e) => {
@@ -3259,6 +3306,7 @@ document.addEventListener('click', async (e) => {
         t.places = t.places.filter((x) => x !== p);
         fixGroup(t.places, p.group);
         save();
+        if (document.getElementById('place-dialog')?.dataset.id === p.id) document.getElementById('place-dialog').close();
         renderPanel();
       }
       return;
@@ -3469,18 +3517,10 @@ document.addEventListener('click', async (e) => {
       save();
       return renderPanel();
     }
-    case 'opt-edit': {
-      const closing = ui.editOpt === el.dataset.id;
-      ui.editOpt = closing ? null : el.dataset.id;
-      renderPanel();
-      if (closing) {
-        // ao concluir, volta o foco para a opção e mostra um aviso curto
-        document.querySelector(`[data-action="opt-edit"][data-id="${el.dataset.id}"]`)?.focus({ preventScroll: true });
-        toast('Opção salva.', 'ok');
-      } else {
-        document.querySelector(`#opt-edit-${el.dataset.id} input`)?.focus({ preventScroll: true });
-        document.getElementById(`opt-edit-${el.dataset.id}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-      }
+    case 'opt-edit':
+    case 'place-edit': {
+      const p = t.places.find((x) => x.id === el.dataset.id);
+      if (p) placeDialog(t, p);
       return;
     }
 

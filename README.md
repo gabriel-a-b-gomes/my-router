@@ -114,6 +114,14 @@ No cartão do passeio, **⏸ Desativar** tira o passeio do roteiro **sem apagar*
 - De longe, as linhas ficam mais finas e os rótulos de km do Modo km somem. Eles voltam ao aproximar.
 - Com zoom bem próximo, nada é agrupado.
 
+### Timeline do dia: cartões compactos e edição em modal
+Na visão de um dia, cada passeio e restaurante aparece como um **cartão compacto**, só com o que importa no dia a dia:
+- **Horário** em destaque, nome, tipo, duração e custo; nos restaurantes, refeição, faixa de preço e estilo; e a **anotação**, só para leitura.
+- Atalhos: **🧭** para navegar até o lugar (ou **📍** em laranja quando ele está sem posição no mapa), **✎** para editar, e **↑ ↓** para mudar a ordem.
+- Nos passeios com atrações aparecem a etiqueta **🎟️ atrações · km** (que abre os Detalhes), o checklist **⭐ Quero ver** e as **alternativas** com "Usar".
+
+**Tocar no cartão (ou no ✎) abre o modal de edição** com nome, dia, horário, duração, custo, tipo, campos de restaurante e anotação, além de 📍 marcar no mapa (o modal fecha, você toca no mapa e ele reabre), 🎟️ atrações, 🔍 detalhes, ⇄ alternativa, 📚 salvar no repositório, ⏸ desativar e remover. As opções de almoço/jantar usam o mesmo modal. Fecha com **✓ Concluir**, ✕, **Esc** ou tocando fora.
+
 ### Meus restaurantes (repositório)
 Uma lista de restaurantes que vale para **todas as viagens**, agrupada por **cidade**, para não precisar recadastrar.
 - Na tela inicial, toque em **🍽️ Meus restaurantes**. A página tem busca (nome, cidade, estilo), **＋ Restaurante** (nome, cidade, preço por pessoa, faixa, estilo, endereço com 🔎, link e anotação) e **⤓ Importar de uma viagem**, que traz todos os restaurantes de uma viagem para a cidade do destino. Reimportar não duplica: os que já existem são atualizados.
